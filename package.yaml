@@ -3,6 +3,33 @@ name: codecrafters-bittorrent
 version: 0.1.0.0
 license: BSD3
 
+default-extensions:
+  - DerivingVia
+  - GeneralizedNewtypeDeriving
+  - ImportQualifiedPost
+  - LambdaCase
+  - MultiWayIf
+  - NamedFieldPuns
+  - NegativeLiterals
+  - OverloadedRecordDot
+  - OverloadedStrings
+  - PartialTypeSignatures
+  - RecordWildCards
+  - ScopedTypeVariables
+  - TupleSections
+
+ghc-options:
+  - -Wall
+  - -Wcompat
+  - -Widentities
+  - -Wincomplete-record-updates
+  - -Wincomplete-uni-patterns
+  - -Wmissing-export-lists
+  - -Wmissing-home-modules
+  - -Wpartial-fields
+  - -Wredundant-constraints
+  - -fdefer-typed-holes
+
 dependencies:
   - base >= 4.19 && < 5
   - aeson # for JSON
