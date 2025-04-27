@@ -27,7 +27,7 @@ main = do
       let encodedValue = args !! 1
       let decodedValue =
             fromRight (error "parse error") $
-              parseOnly parseBencode (B.pack encodedValue)
+              parseOnly parseBencodeValue (B.pack encodedValue)
       let jsonValue = encode decodedValue
       LB.putStr jsonValue
       putStr "\n"
