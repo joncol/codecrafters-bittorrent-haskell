@@ -1,42 +1,34 @@
+import Control.Monad (when)
 import Data.Aeson
-import Data.ByteString.Char8 (ByteString)
+import Data.Attoparsec.ByteString (parseOnly)
 import Data.ByteString.Char8 qualified as B
 import Data.ByteString.Lazy qualified as LB
-import Data.Char (isDigit)
+import Data.Either (fromRight)
 import System.Environment
 import System.Exit
 import System.IO
 
-decodeBencodedValue :: ByteString -> ByteString
-decodeBencodedValue encodedValue
-  | isDigit (B.head encodedValue) =
-      case B.elemIndex ':' encodedValue of
-        Just colonIndex -> B.drop (colonIndex + 1) encodedValue
-        Nothing -> error "Invalid encoded value"
-  | otherwise = error $ "Unhandled encoded value: " ++ B.unpack encodedValue
+import Bencode.Parser
 
 main :: IO ()
 main = do
-  -- Disable output buffering
+  -- Disable output buffering.
   hSetBuffering stdout NoBuffering
   hSetBuffering stderr NoBuffering
 
   args <- getArgs
-  if length args < 2
-    then do
-      putStrLn "Usage: your_bittorrent.sh <command> <args>"
-      exitWith (ExitFailure 1)
-    else return ()
+  when (length args < 2) $ do
+    putStrLn "Usage: your_bittorrent.sh <command> <args>"
+    exitWith (ExitFailure 1)
 
   let command = args !! 0
   case command of
     "decode" -> do
-      -- You can use print statements as follows for debugging, they'll be visible when running tests.
-      hPutStrLn stderr "Logs from your program will appear here!"
-      -- Uncomment this block to pass stage 1
       let encodedValue = args !! 1
-      let decodedValue = decodeBencodedValue (B.pack encodedValue)
-      let jsonValue = encode (B.unpack decodedValue)
+      let decodedValue =
+            fromRight (error "parse error") $
+              parseOnly parseBencode (B.pack encodedValue)
+      let jsonValue = encode decodedValue
       LB.putStr jsonValue
       putStr "\n"
     _ -> putStrLn $ "Unknown command: " ++ command

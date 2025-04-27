@@ -31,26 +31,33 @@ ghc-options:
   - -fdefer-typed-holes
 
 dependencies:
-  - base >= 4.19 && < 5
-  - aeson # for JSON
-  - network-simple # establish a simple TCP network
-  - bytestring # useful to send bytes over the network
-  - network # required when using bytestring
-  - text # use Text rather than String
-  - containers # may help with the database structure and debugging
-  - time # may help with the expiry function
-  - async # may help with concurrency
-  - mtl # may help with structuring
-  # Parsing libs
-  - megaparsec
-  - parser-combinators
-  - parsec
+  - aeson
+  - async
   - attoparsec
+  - base >= 4.19 && < 5
+  - bytestring
+  - containers
+  - mtl
+  - network
+  - network-simple
+  - text
+  - time
+
+library:
+  source-dirs: src
+  exposed-modules:
+    - Bencode.Parser
+    # - Server
+    # - ServerEnv
+    # - ServerM
+  # dependencies:
 
 executables:
   codecrafters-bittorrent-exe:
     main: Main.hs
     source-dirs: app
+    dependencies:
+      - codecrafters-bittorrent
     ghc-options:
       - -threaded
       - -rtsopts
