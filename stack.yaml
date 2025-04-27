@@ -2,3 +2,6 @@ resolver: lts-23.18
 
 packages:
   - .
+
+extra-deps:
+  - bytestring-encoding-0.1.2.0@sha256:e1d2700b1c13ccda4eb561a413e9fa1d7675cef41c709472e9817fb89c1d1c53,2049

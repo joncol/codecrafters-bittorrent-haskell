@@ -36,10 +36,12 @@ dependencies:
   - attoparsec
   - base >= 4.19 && < 5
   - bytestring
+  - bytestring-encoding
   - containers
   - mtl
   - network
   - network-simple
+  - optparse-applicative
   - text
   - time
 
@@ -47,9 +49,7 @@ library:
   source-dirs: src
   exposed-modules:
     - Bencode.Parser
-    # - Server
-    # - ServerEnv
-    # - ServerM
+    - Options
   dependencies:
     - vector
 
