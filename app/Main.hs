@@ -1,16 +1,19 @@
+import Crypto.Hash.SHA1 qualified as SHA1
 import Data.Aeson
 import Data.Attoparsec.ByteString (parseOnly)
+import Data.Binary qualified as Bin
 import Data.ByteString qualified as BS
+import Data.ByteString.Base16 qualified as BSB16
 import Data.ByteString.Encoding qualified as BSE
-import Data.ByteString.Lazy qualified as LB
+import Data.ByteString.Lazy qualified as LBS
 import Data.Either (fromRight)
-import Data.Text.IO qualified as T
 import Options.Applicative (execParser)
 import System.IO
 
 import Bencode.Parser
 import Bencode.Types
 import Bencode.Util
+import Fmt
 import Options
 
 main :: IO ()
@@ -27,7 +30,7 @@ main = do
             fromRight (error "parse error") $
               parseOnly parseBencodeValue (BSE.encode BSE.latin1 encodedValue)
           jsonValue = encode decodedValue
-      LB.putStr jsonValue
+      LBS.putStr jsonValue
       putStr "\n"
     Info filename -> do
       contents <- BS.readFile filename
@@ -38,7 +41,7 @@ main = do
             BDict keyVals' -> keyVals'
             _ -> error "torrent file is not a Bencoded dictionary"
           trackerUrl = case getDictValue "announce" keyVals of
-            Just (BString url) -> url
+            Just (BString url) -> BSE.decode BSE.latin1 url
             _ -> error "no tracker URL in torrent file"
           infoKeyVals = case getDictValue "info" keyVals of
             Just (BDict keyVals') -> keyVals'
@@ -46,5 +49,10 @@ main = do
           len = case getDictValue "length" infoKeyVals of
             Just (BInt len') -> len'
             _ -> error "no length field in info dictionary"
-      T.putStrLn $ "Tracker URL: " <> trackerUrl
-      putStrLn $ "Length: " <> show len
+          infoDictBS = LBS.toStrict . Bin.encode $ BDict infoKeyVals
+          infoHash = SHA1.hash infoDictBS
+          infoHashBase16 = BSE.decode BSE.latin1 $ BSB16.encode infoHash
+
+      fmtLn $ "Tracker URL: " +| trackerUrl |+ ""
+      fmtLn $ "Length: " +| len |+ ""
+      fmtLn $ "Info Hash: " +| infoHashBase16 |+ ""

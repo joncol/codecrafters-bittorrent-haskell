@@ -2,11 +2,12 @@ module Bencode.Parser
   ( parseBencodeValue
   ) where
 
-import Control.Applicative ((<|>), many)
+import Control.Applicative (many, (<|>))
 import Control.Monad (void)
 import Data.Attoparsec.ByteString
 import Data.Attoparsec.ByteString.Char8
-import Data.Text qualified as T
+import Data.ByteString.Char8 qualified as BS8
+import Data.ByteString.Encoding qualified as BSE
 
 import Bencode.Types
 
@@ -24,7 +25,7 @@ bString :: Parser Bencode
 bString = do
   n <- decimal
   void $ char ':'
-  str <- T.pack <$> count n anyChar
+  str <- BS8.pack <$> count n anyChar
   pure $ BString str
 
 bList :: Parser Bencode
@@ -40,6 +41,6 @@ bDict = do
   keyVals <- many $ do
     BString key <- bString
     value <- parseBencodeValue
-    pure $ (key, value)
+    pure $ (BSE.decode BSE.latin1 key, value)
   void $ char 'e'
   pure $ BDict keyVals

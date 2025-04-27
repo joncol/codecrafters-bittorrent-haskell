@@ -35,14 +35,19 @@ dependencies:
   - async
   - attoparsec
   - base >= 4.19 && < 5
+  - base16-bytestring
+  - binary
   - bytestring
   - bytestring-encoding
   - containers
+  - cryptohash-sha1
+  - fmt
   - mtl
   - network
   - network-simple
   - optparse-applicative
   - text
+  - text-show
   - time
 
 library:
