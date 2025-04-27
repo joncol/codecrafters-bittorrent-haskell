@@ -1,12 +1,16 @@
 import Data.Aeson
 import Data.Attoparsec.ByteString (parseOnly)
+import Data.ByteString qualified as BS
 import Data.ByteString.Encoding qualified as BSE
 import Data.ByteString.Lazy qualified as LB
 import Data.Either (fromRight)
+import Data.Text.IO qualified as T
 import Options.Applicative (execParser)
 import System.IO
 
 import Bencode.Parser
+import Bencode.Types
+import Bencode.Util
 import Options
 
 main :: IO ()
@@ -25,3 +29,22 @@ main = do
           jsonValue = encode decodedValue
       LB.putStr jsonValue
       putStr "\n"
+    Info filename -> do
+      contents <- BS.readFile filename
+      let decodedValue =
+            fromRight (error "parse error") $
+              parseOnly parseBencodeValue contents
+          keyVals = case decodedValue of
+            BDict keyVals' -> keyVals'
+            _ -> error "torrent file is not a Bencoded dictionary"
+          trackerUrl = case getDictValue "announce" keyVals of
+            Just (BString url) -> url
+            _ -> error "no tracker URL in torrent file"
+          infoKeyVals = case getDictValue "info" keyVals of
+            Just (BDict keyVals') -> keyVals'
+            _ -> error "no info dictionary in torrent file"
+          len = case getDictValue "length" infoKeyVals of
+            Just (BInt len') -> len'
+            _ -> error "no length field in info dictionary"
+      T.putStrLn $ "Tracker URL: " <> trackerUrl
+      putStrLn $ "Length: " <> show len

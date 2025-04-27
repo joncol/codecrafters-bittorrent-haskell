@@ -49,6 +49,8 @@ library:
   source-dirs: src
   exposed-modules:
     - Bencode.Parser
+    - Bencode.Types
+    - Bencode.Util
     - Options
   dependencies:
     - vector

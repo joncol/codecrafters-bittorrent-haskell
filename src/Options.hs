@@ -5,6 +5,7 @@ module Options
   ) where
 
 import Data.Text (Text)
+import Data.Text qualified as T
 import Options.Applicative
 import Options.Applicative qualified as Opt
 
@@ -15,6 +16,7 @@ data Options = Options
 
 data Command
   = Decode Text
+  | Info FilePath
   deriving (Show)
 
 options :: ParserInfo Options
@@ -36,7 +38,16 @@ optionsParser =
               decodeCommand
               (progDesc "Decode a given Bencode value")
           )
+          <> Opt.command
+            "info"
+            ( info
+                infoCommand
+                (progDesc "Print information about torrent file")
+            )
       )
 
 decodeCommand :: Parser Command
 decodeCommand = Decode <$> strArgument (metavar "BENCODE")
+
+infoCommand :: Parser Command
+infoCommand = Info . T.unpack <$> strArgument (metavar "FILENAME")
