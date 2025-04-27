@@ -50,7 +50,8 @@ library:
     # - Server
     # - ServerEnv
     # - ServerM
-  # dependencies:
+  dependencies:
+    - vector
 
 executables:
   codecrafters-bittorrent-exe:
