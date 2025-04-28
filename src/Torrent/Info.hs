@@ -1,6 +1,7 @@
 module Torrent.Info
-  ( Info (..)
+  ( TorrentInfo (..)
   , getTorrentInfo
+  , InfoHash (..)
   ) where
 
 import Crypto.Hash.SHA1 qualified as SHA1
@@ -13,21 +14,28 @@ import Data.Either (fromRight)
 import Data.Int (Int64)
 import Data.List.Split (chunksOf)
 import Data.Text (Text)
+import Data.Text qualified as T
+import Network.HTTP.Types.URI (urlEncode)
 
 import Bencode.Parser
 import Bencode.Types
 import Bencode.Util
 
-data Info = Info
+data TorrentInfo = TorrentInfo
   { trackerUrl :: Text
   , length :: Int64
-  , infoHash :: BS.ByteString
+  , infoHash :: InfoHash
   , pieceLength :: Int64
   , pieceHashes :: [BS.ByteString]
   }
   deriving (Show)
 
-getTorrentInfo :: FilePath -> IO Info
+newtype InfoHash = InfoHash {getHash :: BS.ByteString}
+
+instance Show InfoHash where
+  show (InfoHash bs) = T.unpack . BSE.decode BSE.latin1 $ urlEncode True bs
+
+getTorrentInfo :: FilePath -> IO TorrentInfo
 getTorrentInfo filename =
   do
     contents <- BS.readFile filename
@@ -47,11 +55,11 @@ getTorrentInfo filename =
           Just (BInt len') -> len'
           _ -> error "no length field in info dictionary"
         infoDictBS = LBS.toStrict . Bin.encode $ BDict infoKeyVals
-        infoHash = SHA1.hash infoDictBS
+        infoHash = InfoHash $ SHA1.hash infoDictBS
         pieceLength = case getDictValue "piece length" infoKeyVals of
           Just (BInt len') -> len'
           _ -> error "no piece length field in info dictionary"
         pieceHashes = case getDictValue "pieces" infoKeyVals of
           Just (BString s) -> map BS.pack . chunksOf 20 $ BS.unpack s
           _ -> error "no piece length field in info dictionary"
-     in pure Info {length = len, ..}
+     in pure TorrentInfo {length = len, ..}

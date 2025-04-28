@@ -42,10 +42,15 @@ dependencies:
   - containers
   - cryptohash-sha1
   - fmt
+  - http-client
+  - http-types
+  - ip
   - mtl
+  - modern-uri
   - network
   - network-simple
   - optparse-applicative
+  - req
   - split
   - text
   - text-show
@@ -59,6 +64,8 @@ library:
     - Bencode.Util
     - Options
     - Torrent.Info
+    - Torrent.Peer
+    - Util
   dependencies:
     - vector
 
