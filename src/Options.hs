@@ -9,7 +9,7 @@ import Data.Text qualified as T
 import Options.Applicative
 import Options.Applicative qualified as Opt
 
-data Options = Options
+newtype Options = Options
   { command :: Command
   }
   deriving (Show)

@@ -46,6 +46,7 @@ dependencies:
   - network
   - network-simple
   - optparse-applicative
+  - split
   - text
   - text-show
   - time

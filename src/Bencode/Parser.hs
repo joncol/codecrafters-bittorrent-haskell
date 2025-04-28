@@ -41,6 +41,6 @@ bDict = do
   keyVals <- many $ do
     BString key <- bString
     value <- parseBencodeValue
-    pure $ (BSE.decode BSE.latin1 key, value)
+    pure (BSE.decode BSE.latin1 key, value)
   void $ char 'e'
   pure $ BDict keyVals
