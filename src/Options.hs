@@ -15,8 +15,8 @@ newtype Options = Options
   deriving (Show)
 
 data Command
-  = Decode Text
-  | Info FilePath
+  = DecodeCommand Text
+  | InfoCommand FilePath
   deriving (Show)
 
 options :: ParserInfo Options
@@ -47,7 +47,7 @@ optionsParser =
       )
 
 decodeCommand :: Parser Command
-decodeCommand = Decode <$> strArgument (metavar "BENCODE")
+decodeCommand = DecodeCommand <$> strArgument (metavar "BENCODE")
 
 infoCommand :: Parser Command
-infoCommand = Info . T.unpack <$> strArgument (metavar "FILENAME")
+infoCommand = InfoCommand . T.unpack <$> strArgument (metavar "FILENAME")

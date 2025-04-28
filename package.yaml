@@ -58,6 +58,7 @@ library:
     - Bencode.Types
     - Bencode.Util
     - Options
+    - Torrent.Info
   dependencies:
     - vector
 
