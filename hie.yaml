@@ -1,0 +1,10 @@
+cradle:
+  stack:
+    - path: "./src"
+      component: "codecrafters-bittorrent:lib"
+
+    - path: "./app/Main.hs"
+      component: "codecrafters-bittorrent:exe:codecrafters-bittorrent-exe"
+
+    - path: "./app/Paths_codecrafters_bittorrent.hs"
+      component: "codecrafters-bittorrent:exe:codecrafters-bittorrent-exe"
