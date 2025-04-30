@@ -7,7 +7,7 @@ import Data.Aeson qualified as A
 import Data.Aeson.Key qualified as A
 import Data.Aeson.KeyMap qualified as A
 import Data.Bifunctor (bimap)
-import Data.Binary (Binary, get, put)
+import Data.Binary
 import Data.Binary.Put (putByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
@@ -17,13 +17,14 @@ import Data.Int (Int64)
 import Data.List (sortOn)
 import Data.Text (Text)
 import Data.Vector qualified as V
+import GHC.Generics (Generic)
 
 data Bencode
   = BString BS.ByteString
   | BInt Int64
   | BList [Bencode]
   | BDict [(Text, Bencode)]
-  deriving (Show)
+  deriving (Generic, Show)
 
 instance A.ToJSON Bencode where
   toJSON (BString bs) = A.String $ BSE.decode BSE.latin1 bs
@@ -52,4 +53,3 @@ instance Binary Bencode where
       put . BString $ BSE.encode BSE.latin1 key
       put value
     put 'e'
-  get = error "not implemented"
