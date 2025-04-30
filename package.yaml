@@ -50,6 +50,7 @@ dependencies:
   - network
   - network-simple
   - optparse-applicative
+  - random
   - req
   - split
   - text

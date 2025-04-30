@@ -8,6 +8,8 @@ import Data.ByteString.Lazy qualified as BSL
 import Data.Either (fromRight)
 import Data.Foldable (traverse_)
 import Data.Maybe (fromMaybe)
+import Data.Text (Text)
+import Data.Text qualified as T
 import Fmt
 import Network.HTTP.Client (Request (..))
 import Network.HTTP.Req hiding (port)
@@ -33,6 +35,8 @@ main = do
 
   opts <- execParser options
 
+  myPeerId <- randomString 20
+
   case opts.command of
     DecodeCommand encodedValue -> do
       let decodedValue =
@@ -52,12 +56,12 @@ main = do
       forM_ torrentInfo.pieceHashes $ \peer -> fmtLn $ "" +|| peer ||+ ""
     PeersCommand filename ->
       getTorrentInfo filename
-        >>= getPeers
+        >>= getPeers myPeerId
         >>= traverse_ (\peer -> fmtLn $ "" +|| peer ||+ "")
 
 -- | Make a GET request to the torrent tracker to get a list of peers.
-getPeers :: MonadIO m => TorrentInfo -> m [Peer]
-getPeers torrentInfo = runReq defaultHttpConfig $ do
+getPeers :: MonadIO m => Text -> TorrentInfo -> m [Peer]
+getPeers myPeerId torrentInfo = runReq defaultHttpConfig $ do
   uri <- mkURI torrentInfo.trackerUrl
 
   -- TODO: Is there a simpler way of handling the port?
@@ -91,7 +95,7 @@ getPeers torrentInfo = runReq defaultHttpConfig $ do
             renderSimpleQuery
               True
               [ ("info_hash", getHash torrentInfo.infoHash)
-              , ("peer_id", "my_peer_id_hello_abc")
+              , ("peer_id", BS8.pack $ T.unpack myPeerId)
               , ("port", "6881")
               , ("uploaded", "0")
               , ("downloaded", "0")
