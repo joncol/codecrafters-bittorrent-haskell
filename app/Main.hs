@@ -1,12 +1,12 @@
-import Control.Monad (forM_)
 import Control.Monad.IO.Class (MonadIO)
 import Data.Aeson qualified as Aeson
 import Data.Attoparsec.ByteString (parseOnly)
+import Data.Binary qualified as Bin
+import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Encoding qualified as BSE
 import Data.ByteString.Lazy qualified as BSL
 import Data.Either (fromRight)
-import Data.Foldable (traverse_)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -15,6 +15,8 @@ import Network.HTTP.Client (Request (..))
 import Network.HTTP.Req hiding (port)
 import Network.HTTP.Req qualified as Req
 import Network.HTTP.Types.URI (renderSimpleQuery)
+import Network.Simple.TCP qualified as NS
+import Network.Socket.ByteString qualified as N
 import Options.Applicative (execParser)
 import System.IO
 import Text.URI
@@ -22,6 +24,8 @@ import Text.URI
 import Bencode.Parser
 import Bencode.Types
 import Bencode.Util
+import Messages.PeerHandshake
+import Net.IPv4 qualified as IPv4
 import Options
 import Torrent.Info
 import Torrent.Peer hiding (port)
@@ -48,16 +52,33 @@ main = do
     InfoCommand filename -> do
       torrentInfo <- getTorrentInfo filename
 
+      let pieceHashes :: [String] = map show torrentInfo.pieceHashes
+
       fmtLn $ "Tracker URL: " +| torrentInfo.trackerUrl |+ ""
       fmtLn $ "Length: " +| torrentInfo.length |+ ""
       fmtLn $ "Info Hash: " +|| torrentInfo.infoHash ||+ ""
       fmtLn $ "Piece Length: " +| torrentInfo.pieceLength |+ ""
       fmtLn "Piece Hashes:"
-      forM_ torrentInfo.pieceHashes $ \peer -> fmtLn $ "" +|| peer ||+ ""
+      fmtLn $ unlinesF pieceHashes
     PeersCommand filename ->
       getTorrentInfo filename
         >>= getPeers myPeerId
-        >>= traverse_ (\peer -> fmtLn $ "" +|| peer ||+ "")
+        >>= \peers -> fmtLn $ unlinesF (map show peers)
+    HandshakeCommand filename (PeerAddress {ip, port}) -> do
+      torrentInfo <- getTorrentInfo filename
+      NS.connect (IPv4.encodeString ip) (show port) $ \(socket, _addr) -> do
+        NS.send
+          socket
+          ( BSL.toStrict . Bin.encode $
+              PeerHandshake
+                { infoHash = torrentInfo.infoHash
+                , peerId = BS.replicate 20 1
+                }
+          )
+        handshakeResp :: PeerHandshake <-
+          Bin.decode . BSL.fromStrict <$> N.recv socket 4096
+        fmtLn $
+          "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
 
 -- | Make a GET request to the torrent tracker to get a list of peers.
 getPeers :: MonadIO m => Text -> TorrentInfo -> m [Peer]

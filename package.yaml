@@ -43,6 +43,7 @@ dependencies:
   - containers
   - cryptohash-sha1
   - fmt
+  - formatting
   - http-client
   - http-types
   - ip
@@ -64,7 +65,9 @@ library:
     - Bencode.Parser
     - Bencode.Types
     - Bencode.Util
+    - Messages.PeerHandshake
     - Options
+    - Torrent.Hash
     - Torrent.Info
     - Torrent.Peer
     - Util
