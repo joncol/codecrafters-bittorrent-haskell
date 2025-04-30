@@ -2,11 +2,11 @@ import Control.Monad (forM_)
 import Control.Monad.IO.Class (MonadIO)
 import Data.Aeson
 import Data.Attoparsec.ByteString (parseOnly)
-import Data.ByteString.Base16 qualified as BSB16
 import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Encoding qualified as BSE
 import Data.ByteString.Lazy qualified as BSL
 import Data.Either (fromRight)
+import Data.Foldable (traverse_)
 import Data.Maybe (fromMaybe)
 import Fmt
 import Network.HTTP.Client (Request (..))
@@ -43,20 +43,17 @@ main = do
       putStr "\n"
     InfoCommand filename -> do
       torrentInfo <- getTorrentInfo filename
-      let infoHashBase16 =
-            BSE.decode BSE.latin1 . BSB16.encode $ getHash torrentInfo.infoHash
-          pieceHashesBase16 =
-            map (BSE.decode latin1 . BSB16.encode) torrentInfo.pieceHashes
 
       fmtLn $ "Tracker URL: " +| torrentInfo.trackerUrl |+ ""
       fmtLn $ "Length: " +| torrentInfo.length |+ ""
-      fmtLn $ "Info Hash: " +| infoHashBase16 |+ ""
+      fmtLn $ "Info Hash: " +|| torrentInfo.infoHash ||+ ""
       fmtLn $ "Piece Length: " +| torrentInfo.pieceLength |+ ""
       fmtLn "Piece Hashes:"
-      forM_ pieceHashesBase16 $ \p -> fmtLn $ build p
-    PeersCommand filename -> do
-      peers <- getPeers =<< getTorrentInfo filename
-      forM_ peers $ \peer -> fmtLn $ "" +|| peer ||+ ""
+      forM_ torrentInfo.pieceHashes $ \peer -> fmtLn $ "" +|| peer ||+ ""
+    PeersCommand filename ->
+      getTorrentInfo filename
+        >>= getPeers
+        >>= traverse_ (\peer -> fmtLn $ "" +|| peer ||+ "")
 
 -- | Make a GET request to the torrent tracker to get a list of peers.
 getPeers :: MonadIO m => TorrentInfo -> m [Peer]

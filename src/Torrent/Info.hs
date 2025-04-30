@@ -1,13 +1,14 @@
 module Torrent.Info
   ( TorrentInfo (..)
   , getTorrentInfo
-  , InfoHash (..)
+  , Hash (..)
   ) where
 
 import Crypto.Hash.SHA1 qualified as SHA1
 import Data.Attoparsec.ByteString
 import Data.Binary qualified as Bin
 import Data.ByteString qualified as BS
+import Data.ByteString.Base16 qualified as BSB16
 import Data.ByteString.Encoding qualified as BSE
 import Data.ByteString.Lazy qualified as LBS
 import Data.Either (fromRight)
@@ -15,7 +16,6 @@ import Data.Int (Int64)
 import Data.List.Split (chunksOf)
 import Data.Text (Text)
 import Data.Text qualified as T
-import Network.HTTP.Types.URI (urlEncode)
 
 import Bencode.Parser
 import Bencode.Types
@@ -24,16 +24,16 @@ import Bencode.Util
 data TorrentInfo = TorrentInfo
   { trackerUrl :: Text
   , length :: Int64
-  , infoHash :: InfoHash
+  , infoHash :: Hash
   , pieceLength :: Int64
-  , pieceHashes :: [BS.ByteString]
+  , pieceHashes :: [Hash]
   }
   deriving (Show)
 
-newtype InfoHash = InfoHash {getHash :: BS.ByteString}
+newtype Hash = Hash {getHash :: BS.ByteString}
 
-instance Show InfoHash where
-  show (InfoHash bs) = T.unpack . BSE.decode BSE.latin1 $ urlEncode True bs
+instance Show Hash where
+  show (Hash bs) = T.unpack . BSE.decode BSE.latin1 $ BSB16.encode bs
 
 getTorrentInfo :: FilePath -> IO TorrentInfo
 getTorrentInfo filename =
@@ -55,11 +55,11 @@ getTorrentInfo filename =
           Just (BInt len') -> len'
           _ -> error "no length field in info dictionary"
         infoDictBS = LBS.toStrict . Bin.encode $ BDict infoKeyVals
-        infoHash = InfoHash $ SHA1.hash infoDictBS
+        infoHash = Hash $ SHA1.hash infoDictBS
         pieceLength = case getDictValue "piece length" infoKeyVals of
           Just (BInt len') -> len'
           _ -> error "no piece length field in info dictionary"
         pieceHashes = case getDictValue "pieces" infoKeyVals of
-          Just (BString s) -> map BS.pack . chunksOf 20 $ BS.unpack s
+          Just (BString s) -> map (Hash . BS.pack) . chunksOf 20 $ BS.unpack s
           _ -> error "no piece length field in info dictionary"
      in pure TorrentInfo {length = len, ..}
