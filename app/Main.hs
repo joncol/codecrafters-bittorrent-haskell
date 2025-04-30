@@ -1,6 +1,6 @@
 import Control.Monad (forM_)
 import Control.Monad.IO.Class (MonadIO)
-import Data.Aeson
+import Data.Aeson qualified as Aeson
 import Data.Attoparsec.ByteString (parseOnly)
 import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Encoding qualified as BSE
@@ -42,7 +42,7 @@ main = do
       let decodedValue =
             fromRight (error "parse error") $
               parseOnly parseBencodeValue (BSE.encode BSE.latin1 encodedValue)
-          jsonValue = encode decodedValue
+          jsonValue = Aeson.encode decodedValue
       BSL.putStr jsonValue
       putStr "\n"
     InfoCommand filename -> do
