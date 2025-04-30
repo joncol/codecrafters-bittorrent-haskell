@@ -27,6 +27,7 @@
           pkgs.pkg-config
           pkgs.zlib
           stack-wrapped
+          pkgs.tcpflow
         ];
 
         # Wrap Stack to work with our Nix integration. We don't want to modify

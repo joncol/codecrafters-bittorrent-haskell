@@ -3,3 +3,4 @@
 codecrafters-bittorrent.cabal
 *~
 .direnv/
+report.xml
