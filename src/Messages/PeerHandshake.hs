@@ -3,9 +3,9 @@ module Messages.PeerHandshake
   , doHandshake
   ) where
 
-import Control.Monad (replicateM, replicateM_)
-import Data.Binary
+import Data.Binary (Binary)
 import Data.Binary qualified as Bin
+import Data.Binary.Get qualified as Bin
 import Data.Binary.Put (putByteString)
 import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BSL
@@ -28,7 +28,7 @@ data PeerHandshake = PeerHandshake
 
 instance Binary PeerHandshake where
   put PeerHandshake {..} = do
-    putWord8 . fromIntegral $ BS.length protocolString
+    Bin.putWord8 . fromIntegral $ BS.length protocolString
     putByteString protocolString
     putByteString $ BS.replicate 8 0 -- reserved bytes
     putByteString $ getHash infoHash
@@ -36,10 +36,10 @@ instance Binary PeerHandshake where
     where
       protocolString :: BS.ByteString
       protocolString = "BitTorrent protocol"
-  get = do
-    replicateM_ 28 getWord8
-    infoHash <- Hash . BS.pack <$> replicateM 20 getWord8
-    peerId <- BS.pack <$> replicateM 20 getWord8
+  get = Bin.isolate (28 + 20 + 20) $ do
+    Bin.skip 28
+    infoHash <- Hash <$> Bin.getByteString 20
+    peerId <- Bin.getByteString 20
     pure PeerHandshake {..}
 
 doHandshake :: FilePath -> PeerAddress -> IO ()
@@ -55,7 +55,7 @@ doHandshake filename (PeerAddress {ip, port}) = do
       NS.send socket . BSL.toStrict . Bin.encode $
         PeerHandshake
           { infoHash = torrentInfo.infoHash
-          , peerId = BS.replicate 20 1
+          , peerId = BS.replicate 20 0 -- can be anything
           }
 
     recvHandshakeResponse :: Socket -> IO PeerHandshake
