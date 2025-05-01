@@ -28,6 +28,7 @@ data Command
   | InfoCommand FilePath
   | PeersCommand FilePath
   | HandshakeCommand FilePath PeerAddress
+  | DownloadPieceCommand FilePath FilePath Int
   deriving (Show)
 
 data PeerAddress = PeerAddress
@@ -43,7 +44,8 @@ parsePeerAddress =
       void $ A.char ':'
       port <- A.decimal
       pure PeerAddress {..}
-  ) <?> "peer address"
+  )
+    <?> "peer address"
 
 options :: ParserInfo Options
 options =
@@ -88,19 +90,34 @@ optionsParser =
                     \handshake"
                 )
             )
+          <> Opt.command
+            "download_piece"
+            ( info
+                downloadPieceCommand
+                (progDesc "Download a piece of a torrent")
+            )
       )
 
 decodeCommand :: Parser Command
 decodeCommand = DecodeCommand <$> strArgument (metavar "BENCODE")
 
 infoCommand :: Parser Command
-infoCommand = InfoCommand . T.unpack <$> strArgument (metavar "FILENAME")
+infoCommand =
+  InfoCommand . T.unpack <$> strArgument (metavar "TORRENT_FILENAME")
 
 peersCommand :: Parser Command
-peersCommand = PeersCommand . T.unpack <$> strArgument (metavar "FILENAME")
+peersCommand =
+  PeersCommand . T.unpack <$> strArgument (metavar "TORRENT_FILENAME")
 
 handshakeCommand :: Parser Command
 handshakeCommand =
   HandshakeCommand . T.unpack
-    <$> strArgument (metavar "FILENAME")
+    <$> strArgument (metavar "TORRENT_FILENAME")
     <*> argument (attoReadM parsePeerAddress) (metavar "<peer_ip>:<peer_port>")
+
+downloadPieceCommand :: Parser Command
+downloadPieceCommand =
+  DownloadPieceCommand . T.unpack
+    <$> strOption (short 'o' <> metavar "OUTPUT_FILENAME")
+    <*> strArgument (metavar "TORRENT_FILENAME")
+    <*> argument auto (metavar "PIECE_INDEX")

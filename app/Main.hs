@@ -79,6 +79,8 @@ main = do
           Bin.decode . BSL.fromStrict <$> N.recv socket 4096
         fmtLn $
           "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
+    DownloadPieceCommand outputFilename torrentFilename pieceIndex -> do
+      fmtLn "TODO: implement download_piece"
 
 -- | Make a GET request to the torrent tracker to get a list of peers.
 getPeers :: MonadIO m => Text -> TorrentInfo -> m [Peer]
