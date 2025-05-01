@@ -14,6 +14,7 @@ import Net.IPv4 qualified as IPv4
 import Network.Simple.TCP qualified as NS
 import Network.Socket.ByteString qualified as N
 
+import Network.Simple.TCP (Socket)
 import Torrent.Hash
 import Torrent.Info
 import Torrent.PeerAddress
@@ -43,16 +44,20 @@ instance Binary PeerHandshake where
 
 doHandshake :: FilePath -> PeerAddress -> IO ()
 doHandshake filename (PeerAddress {ip, port}) = do
-  torrentInfo <- getTorrentInfo filename
   NS.connect (IPv4.encodeString ip) (show port) $ \(socket, _addr) -> do
-    NS.send
-      socket
-      ( BSL.toStrict . Bin.encode $
-          PeerHandshake
-            { infoHash = torrentInfo.infoHash
-            , peerId = BS.replicate 20 1
-            }
-      )
-    handshakeResp :: PeerHandshake <-
-      Bin.decode . BSL.fromStrict <$> N.recv socket 4096
+    sendHandshakeMessage socket =<< getTorrentInfo filename
+    handshakeResp <- recvHandshakeResponse socket
+
     fmtLn $ "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
+  where
+    sendHandshakeMessage :: Socket -> TorrentInfo -> IO ()
+    sendHandshakeMessage socket torrentInfo =
+      NS.send socket . BSL.toStrict . Bin.encode $
+        PeerHandshake
+          { infoHash = torrentInfo.infoHash
+          , peerId = BS.replicate 20 1
+          }
+
+    recvHandshakeResponse :: Socket -> IO PeerHandshake
+    recvHandshakeResponse socket =
+      Bin.decode . BSL.fromStrict <$> N.recv socket 4096
