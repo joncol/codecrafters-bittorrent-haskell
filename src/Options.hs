@@ -1,22 +1,16 @@
 module Options
   ( Options (..)
   , Command (..)
-  , PeerAddress (..)
   , options
   ) where
 
-import Control.Monad (void)
-import Data.Attoparsec.ByteString ((<?>))
-import Data.Attoparsec.ByteString qualified as A
-import Data.Attoparsec.ByteString.Char8 qualified as A
 import Data.Text (Text)
 import Data.Text qualified as T
-import Net.IPv4 (IPv4)
-import Net.IPv4 qualified as IPv4
 import Options.Applicative
 import Options.Applicative qualified as Opt
 
 import Util (attoReadM)
+import Torrent.PeerAddress
 
 newtype Options = Options
   { command :: Command
@@ -30,22 +24,6 @@ data Command
   | HandshakeCommand FilePath PeerAddress
   | DownloadPieceCommand FilePath FilePath Int
   deriving (Show)
-
-data PeerAddress = PeerAddress
-  { ip :: IPv4
-  , port :: Int
-  }
-  deriving (Show)
-
-parsePeerAddress :: A.Parser PeerAddress
-parsePeerAddress =
-  ( do
-      ip <- IPv4.parserUtf8
-      void $ A.char ':'
-      port <- A.decimal
-      pure PeerAddress {..}
-  )
-    <?> "peer address"
 
 options :: ParserInfo Options
 options =

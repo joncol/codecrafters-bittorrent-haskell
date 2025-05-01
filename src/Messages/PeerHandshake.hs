@@ -1,13 +1,23 @@
 module Messages.PeerHandshake
   ( PeerHandshake (..)
+  , doHandshake
   ) where
 
 import Control.Monad (replicateM, replicateM_)
 import Data.Binary
+import Data.Binary qualified as Bin
 import Data.Binary.Put (putByteString)
 import Data.ByteString qualified as BS
+import Data.ByteString.Lazy qualified as BSL
+import Fmt
+import Net.IPv4 qualified as IPv4
+import Network.Simple.TCP qualified as NS
+import Network.Socket.ByteString qualified as N
 
 import Torrent.Hash
+import Torrent.Info
+import Torrent.PeerAddress
+import Util
 
 data PeerHandshake = PeerHandshake
   { infoHash :: Hash
@@ -30,3 +40,19 @@ instance Binary PeerHandshake where
     infoHash <- Hash . BS.pack <$> replicateM 20 getWord8
     peerId <- BS.pack <$> replicateM 20 getWord8
     pure PeerHandshake {..}
+
+doHandshake :: FilePath -> PeerAddress -> IO ()
+doHandshake filename (PeerAddress {ip, port}) = do
+  torrentInfo <- getTorrentInfo filename
+  NS.connect (IPv4.encodeString ip) (show port) $ \(socket, _addr) -> do
+    NS.send
+      socket
+      ( BSL.toStrict . Bin.encode $
+          PeerHandshake
+            { infoHash = torrentInfo.infoHash
+            , peerId = BS.replicate 20 1
+            }
+      )
+    handshakeResp :: PeerHandshake <-
+      Bin.decode . BSL.fromStrict <$> N.recv socket 4096
+    fmtLn $ "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
