@@ -1,6 +1,7 @@
 import Control.Monad.IO.Class (MonadIO)
 import Data.Aeson qualified as Aeson
 import Data.Attoparsec.ByteString (parseOnly)
+import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Encoding qualified as BSE
 import Data.ByteString.Lazy qualified as BSL
@@ -59,7 +60,10 @@ main = do
       getTorrentInfo filename
         >>= getPeers myPeerId
         >>= \peers -> fmtLn $ unlinesF (map show peers)
-    HandshakeCommand filename peerAddress -> doHandshake filename peerAddress
+    HandshakeCommand filename peerAddress -> do
+      handshakeResp <- doHandshake filename peerAddress
+      fmtLn $
+        "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
     DownloadPieceCommand outputFilename torrentFilename pieceIndex -> do
       fmtLn "TODO: implement download_piece"
 
