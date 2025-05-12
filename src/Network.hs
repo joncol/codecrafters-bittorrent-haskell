@@ -1,24 +1,35 @@
-module Messages.GetPeers (
-  getPeers
-) where
+module Network
+  ( getPeers
+  , doHandshake
+  , downloadPiece
+  ) where
 
-import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.IO.Class
 import Data.Attoparsec.ByteString (parseOnly)
+import Data.Binary qualified as Bin
+import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
+import Data.ByteString.Lazy qualified as BSL
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Net.IPv4 qualified as IPv4
 import Network.HTTP.Client (Request (..))
 import Network.HTTP.Req hiding (port)
 import Network.HTTP.Req qualified as Req
 import Network.HTTP.Types.URI (renderSimpleQuery)
+import Network.Simple.TCP (Socket)
+import Network.Simple.TCP qualified as NS
+import Network.Socket.ByteString qualified as N
 import Text.URI
 
 import Bencode.Parser
 import Bencode.Types
 import Bencode.Util
+import Messages.PeerHandshake
+import Torrent.Hash
 import Torrent.Info
-import Torrent.PeerAddress hiding (port)
+import Torrent.PeerAddress
 import Util
 
 -- | Make a GET request to the torrent tracker to get a list of peers.
@@ -65,3 +76,28 @@ getPeers myPeerId torrentInfo = runReq defaultHttpConfig $ do
               , ("compact", "1")
               ]
       in  pure request {queryString}
+
+doHandshake
+  :: MonadIO m
+  => FilePath
+  -> PeerAddress
+  -> m (PeerHandshake, Socket)
+doHandshake filename (PeerAddress {host, port}) = liftIO $ do
+  (socket, _) <- NS.connectSock (IPv4.encodeString host) (show port)
+  sendHandshakeMessage socket =<< getTorrentInfo filename
+  (,socket) <$> recvHandshake socket
+  where
+    sendHandshakeMessage :: Socket -> TorrentInfo -> IO ()
+    sendHandshakeMessage socket torrentInfo =
+      NS.send socket . BSL.toStrict . Bin.encode $
+        PeerHandshake
+          { infoHash = torrentInfo.infoHash
+          , peerId = BS.replicate 20 0 -- can be anything
+          }
+
+    recvHandshake :: Socket -> IO PeerHandshake
+    recvHandshake socket =
+      Bin.decode . BSL.fromStrict <$> N.recv socket 4096
+
+downloadPiece :: MonadIO m => Socket -> FilePath -> Int -> m _
+downloadPiece socket outputFilename pieceIndex = _

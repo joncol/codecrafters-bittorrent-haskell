@@ -18,9 +18,8 @@ import AppEnv
 import AppError
 import AppMonad
 import Bencode.Parser
-import Messages.DownloadPiece
-import Messages.GetPeers
 import Messages.PeerHandshake
+import Network
 import Options
 import Torrent.Info
 import Util
