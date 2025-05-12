@@ -32,36 +32,14 @@ ghc-options:
   - -fdefer-typed-holes
 
 dependencies:
-  - aeson
-  - async
-  - attoparsec
   - base >= 4.19 && < 5
-  - base16-bytestring
-  - binary
-  - bytestring
-  - bytestring-encoding
-  - containers
-  - cryptohash-sha1
-  - fmt
-  - formatting
-  - http-client
-  - http-types
-  - ip
   - mtl
-  - modern-uri
-  - network
-  - network-simple
   - optparse-applicative
-  - random
-  - req
-  - split
-  - text
-  - text-show
-  - time
 
 library:
   source-dirs: src
   exposed-modules:
+    - App
     - Bencode.Parser
     - Bencode.Types
     - Bencode.Util
@@ -73,6 +51,29 @@ library:
     - Torrent.PeerAddress
     - Util
   dependencies:
+    - aeson
+    - async
+    - attoparsec
+    - base16-bytestring
+    - binary
+    - bytestring
+    - bytestring-encoding
+    - containers
+    - cryptohash-sha1
+    - fmt
+    - formatting
+    - http-client
+    - http-types
+    - ip
+    - modern-uri
+    - network
+    - network-simple
+    - random
+    - req
+    - split
+    - text
+    - text-show
+    - time
     - vector
 
 executables:
