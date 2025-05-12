@@ -4,6 +4,7 @@ module Torrent.Info
   , Hash (..)
   ) where
 
+import Control.Monad.IO.Class
 import Crypto.Hash.SHA1 qualified as SHA1
 import Data.Attoparsec.ByteString
 import Data.Binary qualified as Bin
@@ -29,10 +30,10 @@ data TorrentInfo = TorrentInfo
   }
   deriving (Show)
 
-getTorrentInfo :: FilePath -> IO TorrentInfo
+getTorrentInfo :: MonadIO m => FilePath -> m TorrentInfo
 getTorrentInfo filename =
   do
-    contents <- BS.readFile filename
+    contents <- liftIO $ BS.readFile filename
     let decodedValue =
           fromRight (error "parse error") $
             parseOnly parseBencodeValue contents

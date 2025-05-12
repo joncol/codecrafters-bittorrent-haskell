@@ -33,6 +33,7 @@ ghc-options:
 
 dependencies:
   - base >= 4.19 && < 5
+  - fmt
   - mtl
   - optparse-applicative
 
@@ -40,6 +41,8 @@ library:
   source-dirs: src
   exposed-modules:
     - App
+    - AppEnv
+    - AppMonad
     - Bencode.Parser
     - Bencode.Types
     - Bencode.Util
@@ -60,7 +63,6 @@ library:
     - bytestring-encoding
     - containers
     - cryptohash-sha1
-    - fmt
     - formatting
     - http-client
     - http-types
@@ -70,6 +72,7 @@ library:
     - network-simple
     - random
     - req
+    - safe
     - split
     - text
     - text-show

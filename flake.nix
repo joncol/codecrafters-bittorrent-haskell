@@ -19,6 +19,7 @@
         myDevTools = [
           hPkgs.fourmolu
           hPkgs.ghc
+          hPkgs.ghcid
           hPkgs.haskell-language-server
           hPkgs.hoogle
           hPkgs.implicit-hie
