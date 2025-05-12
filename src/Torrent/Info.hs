@@ -22,7 +22,7 @@ import Torrent.Hash
 
 data TorrentInfo = TorrentInfo
   { trackerUrl :: Text
-  , length :: Int64
+  , fileLength :: Int64
   , infoHash :: Hash
   , pieceLength :: Int64
   , pieceHashes :: [Hash]
@@ -45,7 +45,7 @@ getTorrentInfo filename =
         infoKeyVals = case getDictValue "info" keyVals of
           Just (BDict keyVals') -> keyVals'
           _ -> error "no info dictionary in torrent file"
-        len = case getDictValue "length" infoKeyVals of
+        fileLength = case getDictValue "length" infoKeyVals of
           Just (BInt len') -> len'
           _ -> error "no length field in info dictionary"
         infoDictBS = BSL.toStrict . Bin.encode $ BDict infoKeyVals
@@ -56,4 +56,4 @@ getTorrentInfo filename =
         pieceHashes = case getDictValue "pieces" infoKeyVals of
           Just (BString s) -> map (Hash . BS.pack) . chunksOf 20 $ BS.unpack s
           _ -> error "no piece length field in info dictionary"
-     in pure TorrentInfo {length = len, ..}
+     in pure TorrentInfo {..}

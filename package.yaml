@@ -65,11 +65,12 @@ library:
     - Bencode.Parser
     - Bencode.Types
     - Bencode.Util
+    - Messages.GetPeers
     - Messages.PeerHandshake
     - Options
     - Torrent.Hash
     - Torrent.Info
-    - Torrent.Peer
+    - Torrent.PeerAddress
     - Util
   dependencies:
     - vector

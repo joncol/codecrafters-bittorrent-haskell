@@ -41,8 +41,8 @@ instance Binary PeerHandshakeResponse where
     pure PeerHandshakeResponse {..}
 
 doHandshake :: FilePath -> PeerAddress -> IO PeerHandshakeResponse
-doHandshake filename (PeerAddress {ip, port}) = do
-  NS.connect (IPv4.encodeString ip) (show port) $ \(socket, _addr) -> do
+doHandshake filename (PeerAddress {host, port}) = do
+  NS.connect (IPv4.encodeString host) (show port) $ \(socket, _addr) -> do
     sendHandshakeMessage socket =<< getTorrentInfo filename
     recvHandshakeResponse socket
   where
