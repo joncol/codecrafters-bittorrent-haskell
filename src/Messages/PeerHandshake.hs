@@ -41,13 +41,15 @@ instance Binary PeerHandshakeResponse where
     peerId <- Bin.getByteString 20
     pure PeerHandshakeResponse {..}
 
-doHandshake :: MonadIO m => FilePath -> PeerAddress -> m PeerHandshakeResponse
-doHandshake filename (PeerAddress {host, port}) =
-  liftIO $
-    NS.connect (IPv4.encodeString host) (show port) $
-      \(socket, _addr) -> do
-        sendHandshakeMessage socket =<< getTorrentInfo filename
-        recvHandshakeResponse socket
+doHandshake
+  :: MonadIO m
+  => FilePath
+  -> PeerAddress
+  -> m (PeerHandshakeResponse, Socket)
+doHandshake filename (PeerAddress {host, port}) = liftIO $ do
+  (socket, _) <- NS.connectSock (IPv4.encodeString host) (show port)
+  sendHandshakeMessage socket =<< getTorrentInfo filename
+  (,socket) <$> recvHandshakeResponse socket
   where
     sendHandshakeMessage :: Socket -> TorrentInfo -> IO ()
     sendHandshakeMessage socket torrentInfo =

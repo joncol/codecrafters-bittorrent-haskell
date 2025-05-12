@@ -18,6 +18,7 @@ import AppEnv
 import AppError
 import AppMonad
 import Bencode.Parser
+import Messages.DownloadPiece
 import Messages.GetPeers
 import Messages.PeerHandshake
 import Options
@@ -43,7 +44,7 @@ runCommand (PeersCommand filename) = do
     >>= getPeers myPeerId
     >>= \peers -> liftIO . fmtLn $ unlinesF (map show peers)
 runCommand (HandshakeCommand filename peerAddress) = do
-  handshakeResp <- doHandshake filename peerAddress
+  (handshakeResp, _) <- doHandshake filename peerAddress
   liftIO . fmtLn $
     "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
 runCommand
@@ -51,10 +52,9 @@ runCommand
     myPeerId <- asks myPeerId
     peers <- getPeers myPeerId =<< getTorrentInfo torrentFilename
     when (null peers) $ throwError NoPeersInTorrentFile
-    handshakeResp <- doHandshake torrentFilename $ headErr peers
-    liftIO . fmtLn $
-      "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
-    liftIO $ fmtLn "TODO: implement download_piece"
+    let peer = headErr peers
+    (_, socket) <- doHandshake torrentFilename peer
+    downloadPiece socket outputFilename pieceIndex
 
 printTorrentInfo :: TorrentInfo -> IO ()
 printTorrentInfo torrentInfo = do
