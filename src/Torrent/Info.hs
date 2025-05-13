@@ -2,6 +2,7 @@ module Torrent.Info
   ( TorrentInfo (..)
   , getTorrentInfo
   , Hash (..)
+  , getPieceLength
   ) where
 
 import Control.Monad.IO.Class
@@ -61,3 +62,20 @@ getTorrentInfo filename =
           Just (BString s) -> map (Hash . BS.pack) . chunksOf 20 $ BS.unpack s
           _ -> error "no piece length field in info dictionary"
      in pure TorrentInfo {..}
+
+getPieceLength :: TorrentInfo -> Int -> Int
+getPieceLength torrentInfo pieceIndex
+  | 0 <= pieceIndex && pieceIndex < fromIntegral wholePieceCount =
+      fromIntegral torrentInfo.pieceLength
+  | pieceIndex == pieceCount - 1 = lastPieceLength
+  | otherwise = 0
+  where
+    wholePieceCount =
+      torrentInfo.fileLength `div` fromIntegral torrentInfo.pieceLength
+    lastPieceLength =
+      fromIntegral $
+        torrentInfo.fileLength `mod` fromIntegral torrentInfo.pieceLength
+    pieceCount =
+      ceiling $
+        (fromIntegral torrentInfo.fileLength :: Double)
+          / (fromIntegral torrentInfo.pieceLength :: Double)

@@ -19,10 +19,10 @@ main = do
   myPeerId <- randomString 20
   let appEnv = AppEnv {myPeerId}
 
-  result <-
+  mResult <-
     runExceptT
       . flip runReaderT appEnv
       . runAppM
       $ runCommand opts.command
 
-  putStrLn $ "result: " <> show result
+  either (\err -> hPutStrLn stderr $ "error: " <> show err) pure mResult

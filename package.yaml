@@ -68,9 +68,15 @@ library:
     - http-client
     - http-types
     - ip
+    - lens-family-core
     - modern-uri
     - network
     - network-simple
+    - pipes
+    - pipes-binary
+    - pipes-bytestring
+    - pipes-network
+    - pipes-parse
     - random
     - req
     - safe

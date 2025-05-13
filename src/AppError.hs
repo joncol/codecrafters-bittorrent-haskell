@@ -2,5 +2,7 @@ module AppError
   ( AppError (..)
   ) where
 
-data AppError = NoPeersInTorrentFile
+data AppError
+  = NoPeersInTorrentFile
+  | InvalidHandshakeResponse
   deriving (Show)

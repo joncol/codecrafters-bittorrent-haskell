@@ -13,7 +13,6 @@ data Piece = Piece
   { index :: Bin.Word32
   , begin :: Bin.Word32
   , block :: BS.ByteString
-  -- , blockLen :: Int
   }
   deriving (Generic, Show)
 

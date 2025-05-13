@@ -4,16 +4,19 @@ module Network
   , downloadPiece
   ) where
 
+import Control.Monad (forM_)
 import Control.Monad.IO.Class
 import Data.Attoparsec.ByteString (parseOnly)
 import Data.Binary qualified as Bin
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as BSL
+import Data.Function (on)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Fmt
+import Lens.Family.State.Strict (zoom)
 import Net.IPv4 qualified as IPv4
 import Network.HTTP.Client (Request (..))
 import Network.HTTP.Req hiding (port)
@@ -22,6 +25,13 @@ import Network.HTTP.Types.URI (renderSimpleQuery)
 import Network.Simple.TCP (Socket)
 import Network.Simple.TCP qualified as NS
 import Network.Socket.ByteString qualified as N
+import Pipes ((>->))
+import Pipes qualified as P
+import Pipes.Binary qualified as P
+import Pipes.ByteString qualified as PBS
+import Pipes.Network.TCP qualified as P
+import Pipes.Parse qualified as P
+import Pipes.Prelude qualified as P
 import Text.URI
 
 import Bencode.Parser
@@ -33,6 +43,7 @@ import Messages.PeerHandshake
 import Messages.Piece
 import Messages.Request
 import Messages.Unchoke
+import System.IO
 import Torrent.Hash
 import Torrent.Info
 import Torrent.PeerAddress
@@ -46,7 +57,7 @@ recv :: Bin.Binary a => Socket -> IO a
 recv socket = do
   -- Bin.decode . BSL.fromStrict <$> N.recv socket bufferSize
   bs <- N.recv socket bufferSize
-  -- fmtLn $ "recv bs: " +| foldMap byteF (BS.unpack bs) |+ ""
+  fmtLn $ "recv bs: " +| foldMap byteF (BS.unpack bs) |+ ""
   fmtLn $ "recv " +| BS.length bs |+ " bytes"
   pure . Bin.decode $ BSL.fromStrict bs
 
@@ -62,7 +73,7 @@ getPeers myPeerId torrentInfo = runReq defaultHttpConfig $ do
   -- TODO: Is there a simpler way of handling the port?
   let port =
         (fromIntegral . fromMaybe 80)
-          (either (const Nothing) (.authPort) (uri.uriAuthority))
+          (either (const Nothing) (.authPort) uri.uriAuthority)
 
   case useURI uri of
     Just (Left (url, _)) -> doReq url port
@@ -103,36 +114,105 @@ doHandshake
   :: MonadIO m
   => FilePath
   -> PeerAddress
-  -> m (PeerHandshake, Socket)
+  -> m
+      ( Socket
+      , (Either P.DecodingError PeerHandshake, P.Producer BS.ByteString IO ())
+      )
 doHandshake filename (PeerAddress {host, port}) = liftIO $ do
   (socket, _) <- NS.connectSock (IPv4.encodeString host) (show port)
   sendHandshakeMessage socket =<< getTorrentInfo filename
-  (,socket) <$> recv @PeerHandshake socket
+  -- (\peerHandshake -> (socket, peerHandshake, leftovers)) <$> recv @PeerHandshake socket
+  (socket,)
+    <$> P.runStateT decodeHandshakeMessage (P.fromSocket socket bufferSize)
   where
     sendHandshakeMessage :: Socket -> TorrentInfo -> IO ()
-    sendHandshakeMessage socket torrentInfo =
+    sendHandshakeMessage socket torrentInfo = do
+      peerId <- randomBytes 20
       send
         socket
         PeerHandshake
           { infoHash = torrentInfo.infoHash
-          , peerId = BS.replicate 20 0 -- can be anything
+          , peerId
           }
+
+    -- decodeHandshakeMessage :: P.Parser BS.ByteString IO (Maybe PeerHandshake)
+    -- decodeHandshakeMessage = zoom P.decoded P.draw
+
+    decodeHandshakeMessage
+      :: P.Parser BS.ByteString IO (Either P.DecodingError PeerHandshake)
+    decodeHandshakeMessage = P.decode
 
 -- | Download a piece.
 --
 -- This works by breaking the piece into 16 KiB blocks and requesting all
 -- blocks.
-downloadPiece :: MonadIO m => Socket -> FilePath -> TorrentInfo -> Int -> m _
-downloadPiece socket outputFilename torrentInfo pieceIndex = liftIO $ do
-  bitField <- recv @BitField socket
-  fmtLn $ "" +|| bitField ||+ ""
+downloadPiece
+  :: MonadIO m
+  => Socket
+  -> P.Producer BS.ByteString IO ()
+  -> FilePath
+  -> TorrentInfo
+  -> Int
+  -> m ()
+downloadPiece socket leftovers outputFilename torrentInfo pieceIndex = liftIO $ do
+  -- void $ recv @BitField socket
+  -- send socket Interested
+  -- void $ recv @Unchoke socket
+  -- requestBlocks
+
+  fmtLn "-> downloadPiece"
+
+  -- We must account for leftovers here!
+
+  bf <- recv @BitField socket
+  fmtLn $ "bitfield: " +|| bf ||+ ""
   send socket Interested
-  unchoke <- recv @Unchoke socket
-  fmtLn $ "" +|| unchoke ||+ ""
-  sendBlockRequest
-  -- TODO: Receive all blocks.
-  piece <- recv @Piece socket
-  fmtLn $ "" +|| piece ||+ ""
+  uc <- recv @Unchoke socket
+  fmtLn $ "unchoke: " +|| uc ||+ ""
+  requestBlocks
+
+  leftoversAvailable <- not <$> P.null leftovers
+  liftIO . putStrLn $ "leftovers: " <> show leftoversAvailable
+
+  pieces <- P.evalStateT decodePieces $ do
+    -- when leftoversAvailable leftovers
+    leftovers
+    P.fromSocket socket bufferSize
+  fmtLn $ "Pieces: " +|| map (\p -> (p.index, p.begin)) pieces ||+ ""
+
+  withFile outputFilename WriteMode $ \hOut ->
+    P.runEffect $ P.each pieces >-> P.map block >-> PBS.toHandle hOut
   where
-    sendBlockRequest = do
-      send socket Request {index = 0, begin = 0, len = 16384}
+    blockLength = 16384
+
+    pieceLen = getPieceLength torrentInfo pieceIndex
+
+    requestBlocks = do
+      let wholeBlockCount = pieceLen `div` blockLength
+          lastBlockLength = pieceLen `mod` blockLength
+          blockLengths =
+            replicate wholeBlockCount blockLength
+              <> [lastBlockLength | lastBlockLength > 0]
+
+      putStrLn $ "piece index: " <> show pieceIndex
+      putStrLn $ "piece length: " <> show torrentInfo.pieceLength
+      putStrLn $ "this piecelen: " <> show pieceLen
+      putStrLn $ "requested block lengths: " <> show blockLengths
+
+      forM_ ([0 ..] `zip` blockLengths) $ \(n, len) ->
+        send
+          socket
+          Request
+            { index = fromIntegral pieceIndex
+            , begin = n * fromIntegral blockLength
+            , len = fromIntegral len
+            }
+
+    decodePieces :: P.Parser BS.ByteString IO [Piece]
+    decodePieces = zoom (P.decoded . P.splitAt blockCount) P.drawAll
+      where
+        blockCount =
+          ceiling $
+            (((/) :: Double -> Double -> Double) `on` fromIntegral)
+              pieceLen
+              blockLength

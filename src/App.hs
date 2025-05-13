@@ -43,9 +43,12 @@ runCommand (PeersCommand filename) = do
     >>= getPeers myPeerId
     >>= \peers -> liftIO . fmtLn $ unlinesF (map show peers)
 runCommand (HandshakeCommand filename peerAddress) = do
-  (handshakeResp, _) <- doHandshake filename peerAddress
-  liftIO . fmtLn $
-    "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
+  (_, (mHandshakeResp, _)) <- doHandshake filename peerAddress
+  case mHandshakeResp of
+    Right handshakeResp ->
+      liftIO . fmtLn $
+        "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
+    Left _ -> throwError InvalidHandshakeResponse
 runCommand
   (DownloadPieceCommand outputFilename torrentFilename pieceIndex) = do
     myPeerId <- asks myPeerId
@@ -53,8 +56,9 @@ runCommand
     peers <- getPeers myPeerId torrentInfo
     when (null peers) $ throwError NoPeersInTorrentFile
     let peer = headErr peers
-    (_, socket) <- doHandshake torrentFilename peer
-    downloadPiece socket outputFilename torrentInfo pieceIndex
+    (socket, (_, leftovers)) <- doHandshake torrentFilename peer
+    liftIO $ fmtLn "handshake completed, exchanging peer messages"
+    downloadPiece socket leftovers outputFilename torrentInfo pieceIndex
 
 printTorrentInfo :: TorrentInfo -> IO ()
 printTorrentInfo torrentInfo = do

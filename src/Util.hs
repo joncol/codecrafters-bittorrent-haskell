@@ -1,6 +1,7 @@
 module Util
   ( chunksOfBs
   , randomString
+  , randomBytes
   , attoReadM
   , byteF
   ) where
@@ -29,6 +30,9 @@ nothingWhen f = justWhen (not . f)
 
 randomString :: Int -> IO Text
 randomString n = T.pack <$> replicateM n (uniformRM ('a', 'z') globalStdGen)
+
+randomBytes :: Int -> IO BS.ByteString
+randomBytes n = BS.pack <$> replicateM n (uniformRM (0, 255) globalStdGen)
 
 -- | Convert an 'attoparsec' parser to an 'optparse-applicative' custom reader.
 attoReadM :: A.Parser a -> ReadM a
