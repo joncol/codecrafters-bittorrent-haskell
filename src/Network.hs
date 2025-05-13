@@ -162,27 +162,42 @@ downloadPiece socket leftovers outputFilename torrentInfo pieceIndex = liftIO $ 
 
   fmtLn "-> downloadPiece"
 
-  -- We must account for leftovers here!
+  -- We must account for leftovers from earlier handshake here.
+  leftovers' <- P.execStateT decodeBitField $ do
+    leftovers
+    P.fromSocket socket bufferSize
 
-  bf <- recv @BitField socket
-  fmtLn $ "bitfield: " +|| bf ||+ ""
+  -- bf <- recv @BitField socket
+  -- fmtLn $ "bitfield: " +|| bf ||+ ""
   send socket Interested
-  uc <- recv @Unchoke socket
-  fmtLn $ "unchoke: " +|| uc ||+ ""
+  -- uc <- recv @Unchoke socket
+  -- fmtLn $ "unchoke: " +|| uc ||+ ""
+  leftovers'' <- P.execStateT decodeUnchoke $ do
+    leftovers'
+    P.fromSocket socket bufferSize
+
   requestBlocks
 
-  leftoversAvailable <- not <$> P.null leftovers
-  liftIO . putStrLn $ "leftovers: " <> show leftoversAvailable
-
   pieces <- P.evalStateT decodePieces $ do
-    -- when leftoversAvailable leftovers
-    leftovers
+    leftovers''
     P.fromSocket socket bufferSize
   fmtLn $ "Pieces: " +|| map (\p -> (p.index, p.begin)) pieces ||+ ""
 
   withFile outputFilename WriteMode $ \hOut ->
     P.runEffect $ P.each pieces >-> P.map block >-> PBS.toHandle hOut
   where
+    decodeBitField :: P.Parser BS.ByteString IO ()
+    decodeBitField = do
+      Right bf :: Either P.DecodingError BitField <- P.decode
+      liftIO . fmtLn $ "bitfield: " +|| bf ||+ ""
+      pure ()
+
+    decodeUnchoke :: P.Parser BS.ByteString IO ()
+    decodeUnchoke = do
+      Right uc :: Either P.DecodingError Unchoke <- P.decode
+      liftIO . fmtLn $ "unchoke: " +|| uc ||+ ""
+      pure ()
+
     blockLength = 16384
 
     pieceLen = getPieceLength torrentInfo pieceIndex
