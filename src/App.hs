@@ -49,11 +49,12 @@ runCommand (HandshakeCommand filename peerAddress) = do
 runCommand
   (DownloadPieceCommand outputFilename torrentFilename pieceIndex) = do
     myPeerId <- asks myPeerId
-    peers <- getPeers myPeerId =<< getTorrentInfo torrentFilename
+    torrentInfo <- getTorrentInfo torrentFilename
+    peers <- getPeers myPeerId torrentInfo
     when (null peers) $ throwError NoPeersInTorrentFile
     let peer = headErr peers
     (_, socket) <- doHandshake torrentFilename peer
-    downloadPiece socket outputFilename pieceIndex
+    downloadPiece socket outputFilename torrentInfo pieceIndex
 
 printTorrentInfo :: TorrentInfo -> IO ()
 printTorrentInfo torrentInfo = do

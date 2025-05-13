@@ -15,6 +15,7 @@ import Data.Either (fromRight)
 import Data.Int (Int64)
 import Data.List.Split (chunksOf)
 import Data.Text (Text)
+import Data.Word (Word32)
 
 import Bencode.Parser
 import Bencode.Types
@@ -25,11 +26,13 @@ data TorrentInfo = TorrentInfo
   { trackerUrl :: Text
   , fileLength :: Int64
   , infoHash :: Hash
-  , pieceLength :: Int64
+  , pieceLength :: Word32
   , pieceHashes :: [Hash]
   }
   deriving (Show)
 
+-- | Reads torrent information from a file.
+-- TODO: Make this use proper error handling.
 getTorrentInfo :: MonadIO m => FilePath -> m TorrentInfo
 getTorrentInfo filename =
   do
@@ -52,7 +55,7 @@ getTorrentInfo filename =
         infoDictBS = BSL.toStrict . Bin.encode $ BDict infoKeyVals
         infoHash = Hash $ SHA1.hash infoDictBS
         pieceLength = case getDictValue "piece length" infoKeyVals of
-          Just (BInt len') -> len'
+          Just (BInt len') -> fromIntegral len'
           _ -> error "no piece length field in info dictionary"
         pieceHashes = case getDictValue "pieces" infoKeyVals of
           Just (BString s) -> map (Hash . BS.pack) . chunksOf 20 $ BS.unpack s

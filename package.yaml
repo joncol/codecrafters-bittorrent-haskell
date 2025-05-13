@@ -3,6 +3,8 @@ name: codecrafters-bittorrent
 version: 0.1.0.0
 license: BSD3
 
+language: GHC2021
+
 default-extensions:
   - DeriveGeneric
   - DerivingVia
