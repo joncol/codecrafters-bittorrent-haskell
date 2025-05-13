@@ -57,7 +57,6 @@ runCommand
     when (null peers) $ throwError NoPeersInTorrentFile
     let peer = headErr peers
     (socket, (_, leftovers)) <- doHandshake torrentFilename peer
-    liftIO $ fmtLn "handshake completed, exchanging peer messages"
     downloadPiece socket leftovers outputFilename torrentInfo pieceIndex
 
 printTorrentInfo :: TorrentInfo -> IO ()

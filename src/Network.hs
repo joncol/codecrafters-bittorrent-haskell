@@ -15,7 +15,6 @@ import Data.Function (on)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
-import Fmt
 import Lens.Family.State.Strict (zoom)
 import Net.IPv4 qualified as IPv4
 import Network.HTTP.Client (Request (..))
@@ -24,7 +23,6 @@ import Network.HTTP.Req qualified as Req
 import Network.HTTP.Types.URI (renderSimpleQuery)
 import Network.Simple.TCP (Socket)
 import Network.Simple.TCP qualified as NS
-import Network.Socket.ByteString qualified as N
 import Pipes ((>->))
 import Pipes qualified as P
 import Pipes.Binary qualified as P
@@ -51,15 +49,6 @@ import Util
 
 bufferSize :: Integral n => n
 bufferSize = 4096
-
--- | Helper function that decodes a message received from a socket.
-recv :: Bin.Binary a => Socket -> IO a
-recv socket = do
-  -- Bin.decode . BSL.fromStrict <$> N.recv socket bufferSize
-  bs <- N.recv socket bufferSize
-  fmtLn $ "recv bs: " +| foldMap byteF (BS.unpack bs) |+ ""
-  fmtLn $ "recv " +| BS.length bs |+ " bytes"
-  pure . Bin.decode $ BSL.fromStrict bs
 
 -- | Helper function that encodes and sends a message to a socket.
 send :: Bin.Binary a => Socket -> a -> IO ()
@@ -121,7 +110,6 @@ doHandshake
 doHandshake filename (PeerAddress {host, port}) = liftIO $ do
   (socket, _) <- NS.connectSock (IPv4.encodeString host) (show port)
   sendHandshakeMessage socket =<< getTorrentInfo filename
-  -- (\peerHandshake -> (socket, peerHandshake, leftovers)) <$> recv @PeerHandshake socket
   (socket,)
     <$> P.runStateT decodeHandshakeMessage (P.fromSocket socket bufferSize)
   where
@@ -134,9 +122,6 @@ doHandshake filename (PeerAddress {host, port}) = liftIO $ do
           { infoHash = torrentInfo.infoHash
           , peerId
           }
-
-    -- decodeHandshakeMessage :: P.Parser BS.ByteString IO (Maybe PeerHandshake)
-    -- decodeHandshakeMessage = zoom P.decoded P.draw
 
     decodeHandshakeMessage
       :: P.Parser BS.ByteString IO (Either P.DecodingError PeerHandshake)
@@ -154,49 +139,34 @@ downloadPiece
   -> TorrentInfo
   -> Int
   -> m ()
-downloadPiece socket leftovers outputFilename torrentInfo pieceIndex = liftIO $ do
-  -- void $ recv @BitField socket
-  -- send socket Interested
-  -- void $ recv @Unchoke socket
-  -- requestBlocks
+downloadPiece socket leftovers outputFilename torrentInfo pieceIndex =
+  liftIO $ do
+    -- We must account for leftovers from earlier handshake here.
+    leftovers' <- P.execStateT decodeBitField $ do
+      leftovers
+      P.fromSocket socket bufferSize
 
-  fmtLn "-> downloadPiece"
+    send socket Interested
 
-  -- We must account for leftovers from earlier handshake here.
-  leftovers' <- P.execStateT decodeBitField $ do
-    leftovers
-    P.fromSocket socket bufferSize
+    leftovers'' <- P.execStateT decodeUnchoke $ do
+      leftovers'
+      P.fromSocket socket bufferSize
 
-  -- bf <- recv @BitField socket
-  -- fmtLn $ "bitfield: " +|| bf ||+ ""
-  send socket Interested
-  -- uc <- recv @Unchoke socket
-  -- fmtLn $ "unchoke: " +|| uc ||+ ""
-  leftovers'' <- P.execStateT decodeUnchoke $ do
-    leftovers'
-    P.fromSocket socket bufferSize
+    requestBlocks
 
-  requestBlocks
+    pieces <- P.evalStateT decodePieces $ do
+      leftovers''
+      P.fromSocket socket bufferSize
 
-  pieces <- P.evalStateT decodePieces $ do
-    leftovers''
-    P.fromSocket socket bufferSize
-  fmtLn $ "Pieces: " +|| map (\p -> (p.index, p.begin)) pieces ||+ ""
-
-  withFile outputFilename WriteMode $ \hOut ->
-    P.runEffect $ P.each pieces >-> P.map block >-> PBS.toHandle hOut
+    withFile outputFilename WriteMode $ \hOut ->
+      P.runEffect $ P.each pieces >-> P.map block >-> PBS.toHandle hOut
   where
-    decodeBitField :: P.Parser BS.ByteString IO ()
-    decodeBitField = do
-      Right bf :: Either P.DecodingError BitField <- P.decode
-      liftIO . fmtLn $ "bitfield: " +|| bf ||+ ""
-      pure ()
+    decodeBitField
+      :: P.Parser BS.ByteString IO (Either P.DecodingError BitField)
+    decodeBitField = P.decode
 
-    decodeUnchoke :: P.Parser BS.ByteString IO ()
-    decodeUnchoke = do
-      Right uc :: Either P.DecodingError Unchoke <- P.decode
-      liftIO . fmtLn $ "unchoke: " +|| uc ||+ ""
-      pure ()
+    decodeUnchoke :: P.Parser BS.ByteString IO (Either P.DecodingError Unchoke)
+    decodeUnchoke = P.decode
 
     blockLength = 16384
 
@@ -208,11 +178,6 @@ downloadPiece socket leftovers outputFilename torrentInfo pieceIndex = liftIO $ 
           blockLengths =
             replicate wholeBlockCount blockLength
               <> [lastBlockLength | lastBlockLength > 0]
-
-      putStrLn $ "piece index: " <> show pieceIndex
-      putStrLn $ "piece length: " <> show torrentInfo.pieceLength
-      putStrLn $ "this piecelen: " <> show pieceLen
-      putStrLn $ "requested block lengths: " <> show blockLengths
 
       forM_ ([0 ..] `zip` blockLengths) $ \(n, len) ->
         send
