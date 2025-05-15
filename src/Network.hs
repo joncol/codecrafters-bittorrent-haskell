@@ -4,7 +4,7 @@ module Network
   , downloadPiece
   ) where
 
-import Control.Monad (forM_)
+import Control.Monad (forM_, void)
 import Control.Monad.IO.Class
 import Data.Attoparsec.ByteString (parseOnly)
 import Data.Binary qualified as Bin
@@ -141,22 +141,18 @@ downloadPiece
   -> m ()
 downloadPiece socket leftovers outputFilename torrentInfo pieceIndex =
   liftIO $ do
-    -- We must account for leftovers from earlier handshake here.
-    leftovers' <- P.execStateT decodeBitField $ do
+    -- We must account for leftovers from the earlier handshake here.
+    void $ P.evalStateT decodeBitField $ do
       leftovers
       P.fromSocket socket bufferSize
 
     send socket Interested
 
-    leftovers'' <- P.execStateT decodeUnchoke $ do
-      leftovers'
-      P.fromSocket socket bufferSize
+    void $ P.execStateT decodeUnchoke $ P.fromSocket socket bufferSize
 
     requestBlocks
 
-    pieces <- P.evalStateT decodePieces $ do
-      leftovers''
-      P.fromSocket socket bufferSize
+    pieces <- P.evalStateT decodePieces $ P.fromSocket socket bufferSize
 
     withFile outputFilename WriteMode $ \hOut ->
       P.runEffect $ P.each pieces >-> P.map block >-> PBS.toHandle hOut
