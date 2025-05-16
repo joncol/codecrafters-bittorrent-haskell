@@ -23,6 +23,7 @@ data Command
   | PeersCommand FilePath
   | HandshakeCommand FilePath PeerAddress
   | DownloadPieceCommand FilePath FilePath Int
+  | DownloadCommand FilePath FilePath
   deriving (Show)
 
 options :: ParserInfo Options
@@ -74,6 +75,12 @@ optionsParser =
                 downloadPieceCommand
                 (progDesc "Download a piece of a torrent")
             )
+          <> Opt.command
+            "download"
+            ( info
+                downloadCommand
+                (progDesc "Download a torrent")
+            )
       )
 
 decodeCommand :: Parser Command
@@ -99,3 +106,9 @@ downloadPieceCommand =
     <$> strOption (short 'o' <> metavar "OUTPUT_FILENAME")
     <*> strArgument (metavar "TORRENT_FILENAME")
     <*> argument auto (metavar "PIECE_INDEX")
+
+downloadCommand :: Parser Command
+downloadCommand =
+  DownloadCommand . T.unpack
+    <$> strOption (short 'o' <> metavar "OUTPUT_FILENAME")
+    <*> strArgument (metavar "TORRENT_FILENAME")

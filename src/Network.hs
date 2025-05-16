@@ -1,10 +1,12 @@
 module Network
   ( getPeers
   , doHandshake
+  , sendInterested
   , downloadPiece
+  , download
   ) where
 
-import Control.Monad (forM_, void)
+import Control.Monad (forM, forM_, void)
 import Control.Monad.IO.Class
 import Data.Attoparsec.ByteString (parseOnly)
 import Data.Binary qualified as Bin
@@ -23,15 +25,15 @@ import Network.HTTP.Req qualified as Req
 import Network.HTTP.Types.URI (renderSimpleQuery)
 import Network.Simple.TCP (Socket)
 import Network.Simple.TCP qualified as NS
-import Pipes ((>->))
 import Pipes qualified as P
 import Pipes.Binary qualified as P
-import Pipes.ByteString qualified as PBS
 import Pipes.Network.TCP qualified as P
 import Pipes.Parse qualified as P
-import Pipes.Prelude qualified as P
+import System.IO
 import Text.URI
 
+import AppEnv
+import AppMonad
 import Bencode.Parser
 import Bencode.Types
 import Bencode.Util
@@ -41,7 +43,6 @@ import Messages.PeerHandshake
 import Messages.Piece
 import Messages.Request
 import Messages.Unchoke
-import System.IO
 import Torrent.Hash
 import Torrent.Info
 import Torrent.PeerAddress
@@ -101,20 +102,20 @@ getPeers myPeerId torrentInfo = runReq defaultHttpConfig $ do
 
 doHandshake
   :: MonadIO m
-  => FilePath
+  => TorrentInfo
   -> PeerAddress
   -> m
       ( Socket
       , (Either P.DecodingError PeerHandshake, P.Producer BS.ByteString IO ())
       )
-doHandshake filename (PeerAddress {host, port}) = liftIO $ do
+doHandshake torrentInfo (PeerAddress {host, port}) = liftIO $ do
   (socket, _) <- NS.connectSock (IPv4.encodeString host) (show port)
-  sendHandshakeMessage socket =<< getTorrentInfo filename
+  sendHandshakeMessage socket
   (socket,)
     <$> P.runStateT decodeHandshakeMessage (P.fromSocket socket bufferSize)
   where
-    sendHandshakeMessage :: Socket -> TorrentInfo -> IO ()
-    sendHandshakeMessage socket torrentInfo = do
+    sendHandshakeMessage :: Socket -> IO ()
+    sendHandshakeMessage socket = do
       peerId <- randomBytes 20
       send
         socket
@@ -127,6 +128,29 @@ doHandshake filename (PeerAddress {host, port}) = liftIO $ do
       :: P.Parser BS.ByteString IO (Either P.DecodingError PeerHandshake)
     decodeHandshakeMessage = P.decode
 
+-- | This needs to happen before starting to download pieces.
+sendInterested
+  :: forall m
+   . MonadIO m
+  => Socket
+  -> P.Producer BS.ByteString m ()
+  -> m ()
+sendInterested socket leftovers = do
+  -- We must account for any leftovers from the earlier handshake here.
+  void $ P.evalStateT decodeBitField $ do
+    leftovers
+    P.fromSocket socket bufferSize
+
+  liftIO $ send socket Interested
+
+  void $ P.execStateT decodeUnchoke $ P.fromSocket socket bufferSize
+  where
+    decodeBitField :: P.Parser BS.ByteString m (Either P.DecodingError BitField)
+    decodeBitField = P.decode
+
+    decodeUnchoke :: P.Parser BS.ByteString m (Either P.DecodingError Unchoke)
+    decodeUnchoke = P.decode
+
 -- | Download a piece.
 --
 -- This works by breaking the piece into 16 KiB blocks and requesting all
@@ -134,36 +158,15 @@ doHandshake filename (PeerAddress {host, port}) = liftIO $ do
 downloadPiece
   :: MonadIO m
   => Socket
-  -> P.Producer BS.ByteString IO ()
-  -> FilePath
   -> TorrentInfo
   -> Int
-  -> m ()
-downloadPiece socket leftovers outputFilename torrentInfo pieceIndex =
+  -> AppM AppEnv m BS.ByteString
+downloadPiece socket torrentInfo pieceIndex =
   liftIO $ do
-    -- We must account for leftovers from the earlier handshake here.
-    void $ P.evalStateT decodeBitField $ do
-      leftovers
-      P.fromSocket socket bufferSize
-
-    send socket Interested
-
-    void $ P.execStateT decodeUnchoke $ P.fromSocket socket bufferSize
-
     requestBlocks
-
-    pieces <- P.evalStateT decodePieces $ P.fromSocket socket bufferSize
-
-    withFile outputFilename WriteMode $ \hOut ->
-      P.runEffect $ P.each pieces >-> P.map block >-> PBS.toHandle hOut
+    subPieces <- P.evalStateT decodeSubPieces $ P.fromSocket socket bufferSize
+    pure $ foldMap block subPieces
   where
-    decodeBitField
-      :: P.Parser BS.ByteString IO (Either P.DecodingError BitField)
-    decodeBitField = P.decode
-
-    decodeUnchoke :: P.Parser BS.ByteString IO (Either P.DecodingError Unchoke)
-    decodeUnchoke = P.decode
-
     blockLength = 16384
 
     pieceLen = getPieceLength torrentInfo pieceIndex
@@ -184,11 +187,26 @@ downloadPiece socket leftovers outputFilename torrentInfo pieceIndex =
             , len = fromIntegral len
             }
 
-    decodePieces :: P.Parser BS.ByteString IO [Piece]
-    decodePieces = zoom (P.decoded . P.splitAt blockCount) P.drawAll
+    decodeSubPieces :: P.Parser BS.ByteString IO [Piece]
+    decodeSubPieces = zoom (P.decoded . P.splitAt blockCount) P.drawAll
       where
         blockCount =
           ceiling $
             (((/) :: Double -> Double -> Double) `on` fromIntegral)
               pieceLen
               blockLength
+
+-- | Download a torrent.
+download
+  :: MonadIO m
+  => Socket
+  -> FilePath
+  -> TorrentInfo
+  -> AppM AppEnv m ()
+download socket outputFilename torrentInfo = do
+  let pieceCount = length torrentInfo.pieceHashes
+  pieceData <- forM [0 .. pieceCount] $ downloadPiece socket torrentInfo
+  liftIO $ do
+    withFile outputFilename WriteMode . const $ pure () -- Truncate file.
+    withFile outputFilename AppendMode $ \hOut ->
+      BS.hPut hOut $ mconcat pieceData

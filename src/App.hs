@@ -13,6 +13,7 @@ import Data.ByteString.Lazy qualified as BSL
 import Data.Either (fromRight)
 import Fmt
 import Safe (headErr)
+import System.IO
 
 import AppEnv
 import AppError
@@ -22,6 +23,7 @@ import Messages.PeerHandshake
 import Network
 import Options
 import Torrent.Info
+import Torrent.PeerAddress
 import Util
 
 runCommand :: Command -> AppM AppEnv IO ()
@@ -43,7 +45,8 @@ runCommand (PeersCommand filename) = do
     >>= getPeers myPeerId
     >>= \peers -> liftIO . fmtLn $ unlinesF (map show peers)
 runCommand (HandshakeCommand filename peerAddress) = do
-  (_, (mHandshakeResp, _)) <- doHandshake filename peerAddress
+  torrentInfo <- getTorrentInfo filename
+  (_, (mHandshakeResp, _)) <- doHandshake torrentInfo peerAddress
   case mHandshakeResp of
     Right handshakeResp ->
       liftIO . fmtLn $
@@ -51,13 +54,20 @@ runCommand (HandshakeCommand filename peerAddress) = do
     Left _ -> throwError InvalidHandshakeResponse
 runCommand
   (DownloadPieceCommand outputFilename torrentFilename pieceIndex) = do
-    myPeerId <- asks myPeerId
     torrentInfo <- getTorrentInfo torrentFilename
-    peers <- getPeers myPeerId torrentInfo
-    when (null peers) $ throwError NoPeersInTorrentFile
-    let peer = headErr peers
-    (socket, (_, leftovers)) <- doHandshake torrentFilename peer
-    downloadPiece socket leftovers outputFilename torrentInfo pieceIndex
+    peer <- getPeer torrentInfo
+    pieceData <- do
+      (socket, (_, leftovers)) <- doHandshake torrentInfo peer
+      liftIO $ sendInterested socket leftovers
+      downloadPiece socket torrentInfo pieceIndex
+    liftIO . withFile outputFilename WriteMode $ \hOut -> BS.hPut hOut pieceData
+runCommand
+  (DownloadCommand outputFilename torrentFilename) = do
+    torrentInfo <- getTorrentInfo torrentFilename
+    peer <- getPeer torrentInfo
+    (socket, (_, leftovers)) <- doHandshake torrentInfo peer
+    liftIO $ sendInterested socket leftovers
+    download socket outputFilename torrentInfo
 
 printTorrentInfo :: TorrentInfo -> IO ()
 printTorrentInfo torrentInfo = do
@@ -68,3 +78,10 @@ printTorrentInfo torrentInfo = do
   fmtLn $ "Piece Length: " +| torrentInfo.pieceLength |+ ""
   fmtLn "Piece Hashes:"
   fmtLn $ unlinesF pieceHashes
+
+getPeer :: TorrentInfo -> AppM AppEnv IO PeerAddress
+getPeer torrentInfo = do
+  myPeerId <- asks myPeerId
+  peers <- getPeers myPeerId torrentInfo
+  when (null peers) $ throwError NoPeersInTorrentFile
+  pure $ headErr peers
