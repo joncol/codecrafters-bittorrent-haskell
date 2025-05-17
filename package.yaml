@@ -52,6 +52,7 @@ library:
     - Options
     - Torrent.Hash
     - Torrent.Info
+    - Torrent.MagnetLink
     - Torrent.PeerAddress
     - Util
   dependencies:
@@ -60,6 +61,7 @@ library:
     - attoparsec
     - base16-bytestring
     - binary
+    - bytesmith
     - bytestring
     - bytestring-encoding
     - containers
@@ -77,6 +79,7 @@ library:
     - pipes-bytestring
     - pipes-network
     - pipes-parse
+    - primitive
     - random
     - req
     - safe
