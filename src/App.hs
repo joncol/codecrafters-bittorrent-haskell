@@ -2,7 +2,7 @@ module App
   ( runCommand
   ) where
 
-import Control.Monad (when)
+import Control.Monad (when, forM)
 import Control.Monad.Except (throwError)
 import Control.Monad.Reader
 import Data.Aeson qualified as Aeson
@@ -64,10 +64,13 @@ runCommand
 runCommand
   (DownloadCommand outputFilename torrentFilename) = do
     torrentInfo <- getTorrentInfo torrentFilename
-    peer <- getPeer torrentInfo
-    (socket, (_, leftovers)) <- doHandshake torrentInfo peer
-    liftIO $ sendInterested socket leftovers
-    download socket outputFilename torrentInfo
+    myPeerId <- asks myPeerId
+    peers <- getPeers myPeerId torrentInfo
+    sockets <- forM peers $ \peer -> do
+      (socket, (_, leftovers)) <- doHandshake torrentInfo peer
+      liftIO $ sendInterested socket leftovers
+      pure socket
+    download sockets outputFilename torrentInfo
 
 printTorrentInfo :: TorrentInfo -> IO ()
 printTorrentInfo torrentInfo = do

@@ -6,7 +6,8 @@ module Network
   , download
   ) where
 
-import Control.Monad (forM, forM_, void)
+import Control.Concurrent.Async
+import Control.Monad (forM_, void)
 import Control.Monad.IO.Class
 import Data.Attoparsec.ByteString (parseOnly)
 import Data.Binary qualified as Bin
@@ -14,6 +15,7 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as BSL
 import Data.Function (on)
+import Data.List (sortOn)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -160,9 +162,10 @@ downloadPiece
   => Socket
   -> TorrentInfo
   -> Int
-  -> AppM AppEnv m BS.ByteString
+  -> m BS.ByteString
 downloadPiece socket torrentInfo pieceIndex =
   liftIO $ do
+    -- putStrLn $ "Downloading piece " <> show pieceIndex
     requestBlocks
     subPieces <- P.evalStateT decodeSubPieces $ P.fromSocket socket bufferSize
     pure $ foldMap block subPieces
@@ -198,15 +201,28 @@ downloadPiece socket torrentInfo pieceIndex =
 
 -- | Download a torrent.
 download
-  :: MonadIO m
-  => Socket
+  :: forall m
+   . MonadIO m
+  => [Socket]
   -> FilePath
   -> TorrentInfo
   -> AppM AppEnv m ()
-download socket outputFilename torrentInfo = do
+download sockets outputFilename torrentInfo = do
   let pieceCount = length torrentInfo.pieceHashes
-  pieceData <- forM [0 .. pieceCount] $ downloadPiece socket torrentInfo
+  pieces <- go [0 .. pieceCount] []
   liftIO $ do
     withFile outputFilename WriteMode . const $ pure () -- Truncate file.
     withFile outputFilename AppendMode $ \hOut ->
-      BS.hPut hOut $ mconcat pieceData
+      BS.hPut hOut . mconcat . map snd $ sortOn fst pieces
+  where
+    go
+      :: [Int]
+      -> [(Int, BS.ByteString)]
+      -> AppM AppEnv m [(Int, BS.ByteString)]
+    go [] acc = pure acc
+    go unfinishedPieces acc = do
+      results <- liftIO . forConcurrently (unfinishedPieces `zip` sockets) $
+        \(pieceIndex, socket) ->
+          (pieceIndex,) <$> downloadPiece socket torrentInfo pieceIndex
+      let rest = drop (length sockets) unfinishedPieces
+      go rest $ acc <> results
