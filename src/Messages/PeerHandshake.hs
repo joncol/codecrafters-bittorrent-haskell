@@ -20,7 +20,7 @@ instance Binary PeerHandshake where
   put PeerHandshake {..} = do
     Bin.putWord8 . fromIntegral $ BS.length protocolString
     putByteString protocolString
-    putByteString $ BS.replicate 8 0 -- reserved bytes
+    putByteString $ BS.pack [0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00]
     putByteString $ getHash infoHash
     putByteString peerId
     where

@@ -104,13 +104,13 @@ getPeers myPeerId torrentInfo = runReq defaultHttpConfig $ do
 
 doHandshake
   :: MonadIO m
-  => TorrentInfo
+  => Hash
   -> PeerAddress
   -> m
       ( Socket
       , (Either P.DecodingError PeerHandshake, P.Producer BS.ByteString IO ())
       )
-doHandshake torrentInfo (PeerAddress {host, port}) = liftIO $ do
+doHandshake infoHash (PeerAddress {host, port}) = liftIO $ do
   (socket, _) <- NS.connectSock (IPv4.encodeString host) (show port)
   sendHandshakeMessage socket
   (socket,)
@@ -122,7 +122,7 @@ doHandshake torrentInfo (PeerAddress {host, port}) = liftIO $ do
       send
         socket
         PeerHandshake
-          { infoHash = torrentInfo.infoHash
+          { infoHash = infoHash
           , peerId
           }
 

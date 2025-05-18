@@ -25,6 +25,7 @@ data Command
   | DownloadPieceCommand FilePath FilePath Int
   | DownloadCommand FilePath FilePath
   | MagnetParseCommand Text
+  | MagnetHandshakeCommand Text
   deriving (Show)
 
 options :: ParserInfo Options
@@ -88,6 +89,15 @@ optionsParser =
                 magnetParseCommand
                 (progDesc "Parse a magnet link")
             )
+          <> Opt.command
+            "magnet_handshake"
+            ( info
+                magnetHandshakeCommand
+                (progDesc
+                    "Establish a TCP connection with a peer and complete a \
+                    \handshake, using a magnet link"
+                )
+            )
       )
 
 decodeCommand :: Parser Command
@@ -123,3 +133,7 @@ downloadCommand =
 magnetParseCommand :: Parser Command
 magnetParseCommand =
   MagnetParseCommand <$> strArgument (metavar "MAGNET_LINK")
+
+magnetHandshakeCommand :: Parser Command
+magnetHandshakeCommand =
+  MagnetHandshakeCommand <$> strArgument (metavar "MAGNET_LINK")

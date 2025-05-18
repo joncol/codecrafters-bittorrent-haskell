@@ -48,7 +48,7 @@ runCommand (PeersCommand filename) = do
     >>= \peers -> liftIO . fmtLn $ unlinesF (map show peers)
 runCommand (HandshakeCommand filename peerAddress) = do
   torrentInfo <- getTorrentInfo filename
-  (_, (mHandshakeResp, _)) <- doHandshake torrentInfo peerAddress
+  (_, (mHandshakeResp, _)) <- doHandshake torrentInfo.infoHash peerAddress
   case mHandshakeResp of
     Right handshakeResp ->
       liftIO . fmtLn $
@@ -56,9 +56,9 @@ runCommand (HandshakeCommand filename peerAddress) = do
     Left _ -> throwError InvalidHandshakeResponse
 runCommand (DownloadPieceCommand outputFilename torrentFilename pieceIndex) = do
   torrentInfo <- getTorrentInfo torrentFilename
-  peer <- getPeer torrentInfo
+  peerAddress <- getPeerAddress torrentInfo
   pieceData <- do
-    (socket, (_, leftovers)) <- doHandshake torrentInfo peer
+    (socket, (_, leftovers)) <- doHandshake torrentInfo.infoHash peerAddress
     liftIO $ sendInterested socket leftovers
     downloadPiece socket torrentInfo pieceIndex
   liftIO . withFile outputFilename WriteMode $
@@ -68,7 +68,7 @@ runCommand (DownloadCommand outputFilename torrentFilename) = do
   myPeerId <- asks myPeerId
   peers <- getPeers myPeerId torrentInfo
   sockets <- forM peers $ \peer -> do
-    (socket, (_, leftovers)) <- doHandshake torrentInfo peer
+    (socket, (_, leftovers)) <- doHandshake torrentInfo.infoHash peer
     liftIO $ sendInterested socket leftovers
     pure socket
   download sockets outputFilename torrentInfo
@@ -77,6 +77,25 @@ runCommand (MagnetParseCommand magnetLinkStr) = do
     Right magnetLink -> liftIO $ do
       fmtLn $ "Tracker URL: " +| fromMaybe "" magnetLink.mTrackerUrl |+ ""
       fmtLn $ "Info Hash: " +|| magnetLink.infoHash ||+ ""
+    Left err -> error $ "parser error: " <> err
+runCommand (MagnetHandshakeCommand magnetLinkStr) = do
+  case parseOnly parseMagnetLink $ BSE.encode BSE.latin1 magnetLinkStr of
+    Right magnetLink -> do
+      let torrentInfo =
+            TorrentInfo
+              { trackerUrl = fromMaybe "" magnetLink.mTrackerUrl
+              , fileLength = 999 -- Just use some arbitrary value that's greater than 0.
+              , infoHash = magnetLink.infoHash
+              , pieceLength = 0
+              , pieceHashes = []
+              }
+      peerAddress <- getPeerAddress torrentInfo
+      (_, (mHandshakeResp, _)) <- doHandshake magnetLink.infoHash peerAddress
+      case mHandshakeResp of
+        Right handshakeResp ->
+          liftIO . fmtLn $
+            "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
+        Left _ -> throwError InvalidHandshakeResponse
     Left err -> error $ "parser error: " <> err
 
 printTorrentInfo :: TorrentInfo -> IO ()
@@ -89,8 +108,8 @@ printTorrentInfo torrentInfo = do
   fmtLn "Piece Hashes:"
   fmtLn $ unlinesF pieceHashes
 
-getPeer :: TorrentInfo -> AppM AppEnv IO PeerAddress
-getPeer torrentInfo = do
+getPeerAddress :: TorrentInfo -> AppM AppEnv IO PeerAddress
+getPeerAddress torrentInfo = do
   myPeerId <- asks myPeerId
   peers <- getPeers myPeerId torrentInfo
   when (null peers) $ throwError NoPeersInTorrentFile
