@@ -20,6 +20,8 @@ import AppEnv
 import AppError
 import AppMonad
 import Bencode.Parser
+import Data.Map.Strict qualified as Map
+import Messages.ExtensionHandshake
 import Messages.PeerHandshake
 import Network
 import Options
@@ -48,18 +50,15 @@ runCommand (PeersCommand filename) = do
     >>= \peers -> liftIO . fmtLn $ unlinesF (map show peers)
 runCommand (HandshakeCommand filename peerAddress) = do
   torrentInfo <- getTorrentInfo filename
-  (_, (mHandshakeResp, _)) <- doHandshake torrentInfo.infoHash peerAddress
-  case mHandshakeResp of
-    Right handshakeResp ->
-      liftIO . fmtLn $
-        "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
-    Left _ -> throwError InvalidHandshakeResponse
+  (_, handshakeResp) <- doHandshake torrentInfo.infoHash peerAddress
+  liftIO . fmtLn $
+    "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
 runCommand (DownloadPieceCommand outputFilename torrentFilename pieceIndex) = do
   torrentInfo <- getTorrentInfo torrentFilename
   peerAddress <- getPeerAddress torrentInfo
   pieceData <- do
-    (socket, (_, leftovers)) <- doHandshake torrentInfo.infoHash peerAddress
-    liftIO $ sendInterested socket leftovers
+    (socket, _) <- doHandshake torrentInfo.infoHash peerAddress
+    sendInterested socket
     downloadPiece socket torrentInfo pieceIndex
   liftIO . withFile outputFilename WriteMode $
     \hOut -> BS.hPut hOut pieceData
@@ -68,8 +67,8 @@ runCommand (DownloadCommand outputFilename torrentFilename) = do
   myPeerId <- asks myPeerId
   peers <- getPeers myPeerId torrentInfo
   sockets <- forM peers $ \peer -> do
-    (socket, (_, leftovers)) <- doHandshake torrentInfo.infoHash peer
-    liftIO $ sendInterested socket leftovers
+    (socket, _) <- doHandshake torrentInfo.infoHash peer
+    sendInterested socket
     pure socket
   download sockets outputFilename torrentInfo
 runCommand (MagnetParseCommand magnetLinkStr) = do
@@ -84,18 +83,22 @@ runCommand (MagnetHandshakeCommand magnetLinkStr) = do
       let torrentInfo =
             TorrentInfo
               { trackerUrl = fromMaybe "" magnetLink.mTrackerUrl
-              , fileLength = 999 -- Just use some arbitrary value that's greater than 0.
+              , fileLength = 999 -- Just use any value that's greater than 0.
               , infoHash = magnetLink.infoHash
               , pieceLength = 0
               , pieceHashes = []
               }
       peerAddress <- getPeerAddress torrentInfo
-      (_, (mHandshakeResp, _)) <- doHandshake magnetLink.infoHash peerAddress
-      case mHandshakeResp of
-        Right handshakeResp ->
-          liftIO . fmtLn $
-            "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
-        Left _ -> throwError InvalidHandshakeResponse
+      (socket, handshakeResp) <-
+        doHandshake magnetLink.infoHash peerAddress
+      when handshakeResp.hasExtensionSupport
+        . liftIO
+        $ send
+          socket
+          ExtensionHandshake {extensions = Map.fromList [("ut_metadata", 16)]}
+
+      liftIO . fmtLn $
+        "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
     Left err -> error $ "parser error: " <> err
 
 printTorrentInfo :: TorrentInfo -> IO ()

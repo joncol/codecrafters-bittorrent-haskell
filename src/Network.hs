@@ -1,5 +1,6 @@
 module Network
-  ( getPeers
+  ( send
+  , getPeers
   , doHandshake
   , sendInterested
   , downloadPiece
@@ -8,6 +9,7 @@ module Network
 
 import Control.Concurrent.Async
 import Control.Monad (forM_, void)
+import Control.Monad.Except (throwError)
 import Control.Monad.IO.Class
 import Data.Attoparsec.ByteString (parseOnly)
 import Data.Binary qualified as Bin
@@ -27,7 +29,6 @@ import Network.HTTP.Req qualified as Req
 import Network.HTTP.Types.URI (renderSimpleQuery)
 import Network.Simple.TCP (Socket)
 import Network.Simple.TCP qualified as NS
-import Pipes qualified as P
 import Pipes.Binary qualified as P
 import Pipes.Network.TCP qualified as P
 import Pipes.Parse qualified as P
@@ -35,6 +36,7 @@ import System.IO
 import Text.URI
 
 import AppEnv
+import AppError
 import AppMonad
 import Bencode.Parser
 import Bencode.Types
@@ -103,18 +105,24 @@ getPeers myPeerId torrentInfo = runReq defaultHttpConfig $ do
       in  pure request {queryString}
 
 doHandshake
-  :: MonadIO m
-  => Hash
+  :: Hash
   -> PeerAddress
-  -> m
-      ( Socket
-      , (Either P.DecodingError PeerHandshake, P.Producer BS.ByteString IO ())
-      )
-doHandshake infoHash (PeerAddress {host, port}) = liftIO $ do
+  -> AppM AppEnv IO (Socket, PeerHandshake)
+doHandshake infoHash (PeerAddress {host, port}) = do
   (socket, _) <- NS.connectSock (IPv4.encodeString host) (show port)
-  sendHandshakeMessage socket
-  (socket,)
-    <$> P.runStateT decodeHandshakeMessage (P.fromSocket socket bufferSize)
+  liftIO $ sendHandshakeMessage socket
+  (mResult, leftovers) <-
+    liftIO
+      . P.runStateT decodeHandshakeMessage
+      $ P.fromSocket socket bufferSize
+  case mResult of
+    Left (P.DecodingError _ msg) -> throwError $ DecodingError (T.pack msg)
+    Right peerHandshake -> do
+      -- We must account for any leftovers from the handshake here.
+      void . liftIO . P.evalStateT decodeBitField $ do
+        leftovers
+        P.fromSocket socket bufferSize
+      pure (socket, peerHandshake)
   where
     sendHandshakeMessage :: Socket -> IO ()
     sendHandshakeMessage socket = do
@@ -124,32 +132,26 @@ doHandshake infoHash (PeerAddress {host, port}) = liftIO $ do
         PeerHandshake
           { infoHash = infoHash
           , peerId
+          , hasExtensionSupport = True
           }
 
     decodeHandshakeMessage
       :: P.Parser BS.ByteString IO (Either P.DecodingError PeerHandshake)
     decodeHandshakeMessage = P.decode
 
--- | This needs to happen before starting to download pieces.
+    decodeBitField
+      :: P.Parser BS.ByteString IO (Either P.DecodingError BitField)
+    decodeBitField = P.decode
+
 sendInterested
   :: forall m
    . MonadIO m
   => Socket
-  -> P.Producer BS.ByteString m ()
   -> m ()
-sendInterested socket leftovers = do
-  -- We must account for any leftovers from the earlier handshake here.
-  void $ P.evalStateT decodeBitField $ do
-    leftovers
-    P.fromSocket socket bufferSize
-
+sendInterested socket = do
   liftIO $ send socket Interested
-
   void $ P.execStateT decodeUnchoke $ P.fromSocket socket bufferSize
   where
-    decodeBitField :: P.Parser BS.ByteString m (Either P.DecodingError BitField)
-    decodeBitField = P.decode
-
     decodeUnchoke :: P.Parser BS.ByteString m (Either P.DecodingError Unchoke)
     decodeUnchoke = P.decode
 
@@ -165,7 +167,6 @@ downloadPiece
   -> m BS.ByteString
 downloadPiece socket torrentInfo pieceIndex =
   liftIO $ do
-    -- putStrLn $ "Downloading piece " <> show pieceIndex
     requestBlocks
     subPieces <- P.evalStateT decodeSubPieces $ P.fromSocket socket bufferSize
     pure $ foldMap block subPieces

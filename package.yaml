@@ -48,6 +48,7 @@ library:
     - Bencode.Parser
     - Bencode.Types
     - Bencode.Util
+    - Messages.ExtensionHandshake
     - Messages.PeerHandshake
     - Options
     - Torrent.Hash
