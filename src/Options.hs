@@ -26,6 +26,7 @@ data Command
   | DownloadCommand FilePath FilePath
   | MagnetParseCommand Text
   | MagnetHandshakeCommand Text
+  | MagnetInfoCommand Text
   deriving (Show)
 
 options :: ParserInfo Options
@@ -98,6 +99,14 @@ optionsParser =
                     \handshake, using a magnet link"
                 )
             )
+          <> Opt.command
+            "magnet_info"
+            ( info
+                magnetInfoCommand
+                (progDesc
+                    "Request metadata from peers, using a magnet link"
+                )
+            )
       )
 
 decodeCommand :: Parser Command
@@ -131,9 +140,12 @@ downloadCommand =
     <*> strArgument (metavar "TORRENT_FILENAME")
 
 magnetParseCommand :: Parser Command
-magnetParseCommand =
-  MagnetParseCommand <$> strArgument (metavar "MAGNET_LINK")
+magnetParseCommand = MagnetParseCommand <$> strArgument (metavar "MAGNET_LINK")
 
 magnetHandshakeCommand :: Parser Command
 magnetHandshakeCommand =
   MagnetHandshakeCommand <$> strArgument (metavar "MAGNET_LINK")
+
+magnetInfoCommand :: Parser Command
+magnetInfoCommand = MagnetInfoCommand <$> strArgument (metavar "MAGNET_LINK")
+

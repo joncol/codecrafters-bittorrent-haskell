@@ -35,7 +35,7 @@ instance Binary Handshake where
       dict = BDict [("m", innerDict)]
       extensions' = map (second $ BInt . fromIntegral) $ Map.toList extensions
       innerDict = BDict extensions'
-      dictSize = BSL.length . Bin.runPut $ Bin.put dict
+      dictSize = BSL.length $ Bin.encode dict
   get = do
     len <- Bin.getWord32be
     Bin.isolate (fromIntegral len) $ do
@@ -48,7 +48,7 @@ instance Binary Handshake where
         BDict keyVals ->
           let innerDict = lookup "m" keyVals
           in  pure Handshake {extensions = bDictToMap innerDict}
-        _ -> error "expected a dictionary in extension handshake response"
+        _ -> error "expected a BDict in extension handshake response"
 
 bDictToMap :: Maybe Bencode -> Map Text Word8
 bDictToMap (Just (BDict keyVals)) = Map.fromList $ map (second toInt) keyVals

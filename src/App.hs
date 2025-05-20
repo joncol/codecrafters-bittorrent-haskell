@@ -11,7 +11,6 @@ import Data.Binary qualified as Bin
 import Data.ByteString qualified as BS
 import Data.ByteString.Encoding qualified as BSE
 import Data.ByteString.Lazy qualified as BSL
-import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Fmt
 import Safe (headErr)
@@ -21,7 +20,6 @@ import AppEnv
 import AppError
 import AppMonad
 import Bencode.Types
-import Messages.Extensions.Handshake
 import Messages.PeerHandshake
 import Network
 import Options
@@ -79,15 +77,7 @@ runCommand (MagnetParseCommand magnetLinkStr) = do
 runCommand (MagnetHandshakeCommand magnetLinkStr) = do
   case parseOnly parseMagnetLink $ BSE.encode BSE.latin1 magnetLinkStr of
     Right magnetLink -> do
-      let torrentInfo =
-            TorrentInfo
-              { trackerUrl = fromMaybe "" magnetLink.mTrackerUrl
-              , fileLength = 999 -- Just use any value that's greater than 0.
-              , infoHash = magnetLink.infoHash
-              , pieceLength = 0
-              , pieceHashes = []
-              }
-      peerAddress <- getPeerAddress torrentInfo
+      peerAddress <- getPeerAddress $ magnetLinkToTorrentInfo magnetLink
       (socket, (handshakeResp, leftovers)) <-
         doHandshake magnetLink.infoHash peerAddress
 
@@ -96,14 +86,29 @@ runCommand (MagnetHandshakeCommand magnetLinkStr) = do
         $ "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
 
       when handshakeResp.hasExtensionSupport $ do
-        let extensions = Map.fromList [("ut_metadata", 16)]
-        liftIO $ send socket Handshake {extensions}
-        extensionHandshakeResp <- recvExtensionHandshake socket leftovers
-        let metadataId =
-              fromMaybe 0 $
-                Map.lookup "ut_metadata" extensionHandshakeResp.extensions
+        metadataId <- doExtensionHandshake socket leftovers
         liftIO . fmtLn $ "Peer Metadata Extension ID: " +| metadataId |+ ""
     Left err -> error $ "parser error: " <> err
+runCommand (MagnetInfoCommand magnetLinkStr) = do
+  case parseOnly parseMagnetLink $ BSE.encode BSE.latin1 magnetLinkStr of
+    Right magnetLink -> do
+      peerAddress <- getPeerAddress $ magnetLinkToTorrentInfo magnetLink
+      (socket, (handshakeResp, leftovers)) <-
+        doHandshake magnetLink.infoHash peerAddress
+      when handshakeResp.hasExtensionSupport $ do
+        metadataId <- doExtensionHandshake socket leftovers
+        sendMetadataRequest socket metadataId
+    Left err -> error $ "parser error: " <> err
+
+magnetLinkToTorrentInfo :: MagnetLink -> TorrentInfo
+magnetLinkToTorrentInfo magnetLink =
+  TorrentInfo
+    { trackerUrl = fromMaybe "" magnetLink.mTrackerUrl
+    , fileLength = 999 -- Just use any value that's greater than 0.
+    , infoHash = magnetLink.infoHash
+    , pieceLength = 0
+    , pieceHashes = []
+    }
 
 printTorrentInfo :: TorrentInfo -> IO ()
 printTorrentInfo torrentInfo = do

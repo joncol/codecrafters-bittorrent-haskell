@@ -3,7 +3,9 @@ module Network
   , recv
   , getPeers
   , doHandshake
+  , doExtensionHandshake
   , recvExtensionHandshake
+  , sendMetadataRequest
   , sendInterested
   , downloadPiece
   , download
@@ -19,9 +21,11 @@ import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as BSL
 import Data.Function (on)
 import Data.List (sortOn)
+import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Data.Word (Word8)
 import Fmt
 import Lens.Family.State.Strict (zoom)
 import Net.IPv4 qualified as IPv4
@@ -45,6 +49,7 @@ import Bencode.Types
 import Bencode.Util
 import Messages.BitField
 import Messages.Extensions.Handshake
+import Messages.Extensions.Metadata.Request qualified as Metadata
 import Messages.Interested
 import Messages.PeerHandshake
 import Messages.Piece
@@ -161,6 +166,18 @@ doHandshake infoHash (PeerAddress {host, port}) = do
       :: P.Parser BS.ByteString IO (Either P.DecodingError BitField)
     decodeBitField = P.decode
 
+doExtensionHandshake
+  :: (MonadIO m, MonadError AppError m)
+  => Socket
+  -> P.Producer BS.ByteString IO ()
+  -> m Word8
+doExtensionHandshake socket leftovers = do
+  let extensions = Map.fromList [("ut_metadata", 16)]
+  liftIO $ send socket Handshake {extensions}
+  extensionHandshakeResp <- recvExtensionHandshake socket leftovers
+  pure . fromMaybe 0 $
+    Map.lookup "ut_metadata" extensionHandshakeResp.extensions
+
 -- | Note that the incoming extension handshake can happen before the outgoing
 -- extension handshake.
 recvExtensionHandshake
@@ -181,6 +198,10 @@ recvExtensionHandshake socket leftovers = do
     decodeExtensionHandshakeMessage
       :: P.Parser BS.ByteString IO (Either P.DecodingError Handshake)
     decodeExtensionHandshakeMessage = P.decode
+
+sendMetadataRequest :: forall m. MonadIO m => Socket -> Word8 -> m ()
+sendMetadataRequest socket extensionMsgId = do
+  liftIO $ send socket Metadata.Request {extensionMsgId, pieceIndex = 0}
 
 sendInterested :: forall m. MonadIO m => Socket -> m ()
 sendInterested socket = do
