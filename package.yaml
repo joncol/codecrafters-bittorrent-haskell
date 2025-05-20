@@ -89,6 +89,7 @@ library:
     - text-show
     - time
     - vector
+    - word8
 
 executables:
   codecrafters-bittorrent-exe:

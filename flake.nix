@@ -21,7 +21,6 @@
           hPkgs.ghc
           hPkgs.ghcid
           hPkgs.haskell-language-server
-          hPkgs.hoogle
           hPkgs.implicit-hie
           pkgs.codecrafters-cli
           pkgs.netcat-gnu

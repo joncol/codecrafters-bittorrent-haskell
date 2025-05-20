@@ -1,7 +1,9 @@
 module Network
   ( send
+  , recv
   , getPeers
   , doHandshake
+  , recvExtensionHandshake
   , sendInterested
   , downloadPiece
   , download
@@ -9,7 +11,7 @@ module Network
 
 import Control.Concurrent.Async
 import Control.Monad (forM_, void)
-import Control.Monad.Except (throwError)
+import Control.Monad.Except (MonadError, throwError)
 import Control.Monad.IO.Class
 import Data.Attoparsec.ByteString (parseOnly)
 import Data.Binary qualified as Bin
@@ -21,6 +23,7 @@ import Data.List (sortOn)
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
+import Fmt
 import Lens.Family.State.Strict (zoom)
 import Net.IPv4 qualified as IPv4
 import Network.HTTP.Client (Request (..))
@@ -29,6 +32,7 @@ import Network.HTTP.Req qualified as Req
 import Network.HTTP.Types.URI (renderSimpleQuery)
 import Network.Simple.TCP (Socket)
 import Network.Simple.TCP qualified as NS
+import Network.Socket.ByteString qualified as N
 import Pipes.Binary qualified as P
 import Pipes.Network.TCP qualified as P
 import Pipes.Parse qualified as P
@@ -42,6 +46,7 @@ import Bencode.Parser
 import Bencode.Types
 import Bencode.Util
 import Messages.BitField
+import Messages.ExtensionHandshake
 import Messages.Interested
 import Messages.PeerHandshake
 import Messages.Piece
@@ -58,6 +63,20 @@ bufferSize = 4096
 -- | Helper function that encodes and sends a message to a socket.
 send :: Bin.Binary a => Socket -> a -> IO ()
 send socket = NS.send socket . BSL.toStrict . Bin.encode
+
+-- -- | Helper function that decodes a message received from a socket.
+-- recv :: Bin.Binary a => Socket -> IO a
+-- recv socket =
+--   Bin.decode . BSL.fromStrict <$> N.recv socket bufferSize
+
+-- | Helper function that decodes a message received from a socket.
+recv :: Bin.Binary a => Socket -> IO a
+recv socket = do
+  -- Bin.decode . BSL.fromStrict <$> N.recv socket bufferSize
+  bs <- N.recv socket bufferSize
+  fmtLn $ "recv bs: " +| foldMap byteF (BS.unpack bs) |+ ""
+  fmtLn $ "recv " +| BS.length bs |+ " bytes"
+  pure . Bin.decode $ BSL.fromStrict bs
 
 -- | Make a GET request to the torrent tracker to get a list of peers.
 getPeers :: MonadIO m => Text -> TorrentInfo -> m [PeerAddress]
@@ -105,9 +124,10 @@ getPeers myPeerId torrentInfo = runReq defaultHttpConfig $ do
       in  pure request {queryString}
 
 doHandshake
-  :: Hash
+  :: MonadIO m
+  => Hash
   -> PeerAddress
-  -> AppM AppEnv IO (Socket, PeerHandshake)
+  -> AppM AppEnv m (Socket, (PeerHandshake, P.Producer BS.ByteString IO ()))
 doHandshake infoHash (PeerAddress {host, port}) = do
   (socket, _) <- NS.connectSock (IPv4.encodeString host) (show port)
   liftIO $ sendHandshakeMessage socket
@@ -119,10 +139,10 @@ doHandshake infoHash (PeerAddress {host, port}) = do
     Left (P.DecodingError _ msg) -> throwError $ DecodingError (T.pack msg)
     Right peerHandshake -> do
       -- We must account for any leftovers from the handshake here.
-      void . liftIO . P.evalStateT decodeBitField $ do
+      leftovers' <- liftIO . P.execStateT decodeBitField $ do
         leftovers
         P.fromSocket socket bufferSize
-      pure (socket, peerHandshake)
+      pure (socket, (peerHandshake, leftovers'))
   where
     sendHandshakeMessage :: Socket -> IO ()
     sendHandshakeMessage socket = do
@@ -143,11 +163,28 @@ doHandshake infoHash (PeerAddress {host, port}) = do
       :: P.Parser BS.ByteString IO (Either P.DecodingError BitField)
     decodeBitField = P.decode
 
-sendInterested
+-- | Note that the incoming extension handshake can happen before the outgoing
+-- extension handshake.
+recvExtensionHandshake
   :: forall m
-   . MonadIO m
+   . (MonadIO m, MonadError AppError m)
   => Socket
-  -> m ()
+  -> P.Producer BS.ByteString IO ()
+  -> m ExtensionHandshake
+recvExtensionHandshake socket leftovers = do
+  mResult <- liftIO . P.evalStateT decodeExtensionHandshakeMessage $ do
+    leftovers
+    P.fromSocket socket bufferSize
+  case mResult of
+    Left (P.DecodingError _ msg) -> throwError $ DecodingError (T.pack msg)
+    Right extensionHandshake -> do
+      pure extensionHandshake
+  where
+    decodeExtensionHandshakeMessage
+      :: P.Parser BS.ByteString IO (Either P.DecodingError ExtensionHandshake)
+    decodeExtensionHandshakeMessage = P.decode
+
+sendInterested :: forall m. MonadIO m => Socket -> m ()
 sendInterested socket = do
   liftIO $ send socket Interested
   void $ P.execStateT decodeUnchoke $ P.fromSocket socket bufferSize

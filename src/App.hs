@@ -11,6 +11,7 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Encoding qualified as BSE
 import Data.ByteString.Lazy qualified as BSL
 import Data.Either (fromRight)
+import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Fmt
 import Safe (headErr)
@@ -20,7 +21,6 @@ import AppEnv
 import AppError
 import AppMonad
 import Bencode.Parser
-import Data.Map.Strict qualified as Map
 import Messages.ExtensionHandshake
 import Messages.PeerHandshake
 import Network
@@ -50,7 +50,7 @@ runCommand (PeersCommand filename) = do
     >>= \peers -> liftIO . fmtLn $ unlinesF (map show peers)
 runCommand (HandshakeCommand filename peerAddress) = do
   torrentInfo <- getTorrentInfo filename
-  (_, handshakeResp) <- doHandshake torrentInfo.infoHash peerAddress
+  (_, (handshakeResp, _)) <- doHandshake torrentInfo.infoHash peerAddress
   liftIO . fmtLn $
     "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
 runCommand (DownloadPieceCommand outputFilename torrentFilename pieceIndex) = do
@@ -89,16 +89,21 @@ runCommand (MagnetHandshakeCommand magnetLinkStr) = do
               , pieceHashes = []
               }
       peerAddress <- getPeerAddress torrentInfo
-      (socket, handshakeResp) <-
+      (socket, (handshakeResp, leftovers)) <-
         doHandshake magnetLink.infoHash peerAddress
-      when handshakeResp.hasExtensionSupport
-        . liftIO
-        $ send
-          socket
-          ExtensionHandshake {extensions = Map.fromList [("ut_metadata", 16)]}
 
-      liftIO . fmtLn $
-        "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
+      liftIO
+        . fmtLn
+        $ "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
+
+      when handshakeResp.hasExtensionSupport $ do
+        let extensions = Map.fromList [("ut_metadata", 16)]
+        liftIO $ send socket ExtensionHandshake {extensions}
+        extensionHandshakeResp <- recvExtensionHandshake socket leftovers
+        let metadataId =
+              fromMaybe 0 $
+                Map.lookup "ut_metadata" extensionHandshakeResp.extensions
+        liftIO . fmtLn $ "Peer Metadata Extension ID: " +| metadataId |+ ""
     Left err -> error $ "parser error: " <> err
 
 printTorrentInfo :: TorrentInfo -> IO ()
