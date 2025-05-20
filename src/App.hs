@@ -21,7 +21,7 @@ import AppEnv
 import AppError
 import AppMonad
 import Bencode.Types
-import Messages.ExtensionHandshake
+import Messages.Extensions.Handshake
 import Messages.PeerHandshake
 import Network
 import Options
@@ -97,7 +97,7 @@ runCommand (MagnetHandshakeCommand magnetLinkStr) = do
 
       when handshakeResp.hasExtensionSupport $ do
         let extensions = Map.fromList [("ut_metadata", 16)]
-        liftIO $ send socket ExtensionHandshake {extensions}
+        liftIO $ send socket Handshake {extensions}
         extensionHandshakeResp <- recvExtensionHandshake socket leftovers
         let metadataId =
               fromMaybe 0 $

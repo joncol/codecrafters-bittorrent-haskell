@@ -44,7 +44,7 @@ import AppMonad
 import Bencode.Types
 import Bencode.Util
 import Messages.BitField
-import Messages.ExtensionHandshake
+import Messages.Extensions.Handshake
 import Messages.Interested
 import Messages.PeerHandshake
 import Messages.Piece
@@ -168,7 +168,7 @@ recvExtensionHandshake
    . (MonadIO m, MonadError AppError m)
   => Socket
   -> P.Producer BS.ByteString IO ()
-  -> m ExtensionHandshake
+  -> m Handshake
 recvExtensionHandshake socket leftovers = do
   mResult <- liftIO . P.evalStateT decodeExtensionHandshakeMessage $ do
     leftovers
@@ -179,7 +179,7 @@ recvExtensionHandshake socket leftovers = do
       pure extensionHandshake
   where
     decodeExtensionHandshakeMessage
-      :: P.Parser BS.ByteString IO (Either P.DecodingError ExtensionHandshake)
+      :: P.Parser BS.ByteString IO (Either P.DecodingError Handshake)
     decodeExtensionHandshakeMessage = P.decode
 
 sendInterested :: forall m. MonadIO m => Socket -> m ()

@@ -1,5 +1,5 @@
-module Messages.ExtensionHandshake
-  ( ExtensionHandshake (..)
+module Messages.Extensions.Handshake
+  ( Handshake (..)
   ) where
 
 import Control.Monad (guard)
@@ -16,7 +16,7 @@ import Data.Word (Word8)
 
 import Bencode.Types
 
-newtype ExtensionHandshake = ExtensionHandshake {extensions :: Map Text Word8}
+newtype Handshake = Handshake {extensions :: Map Text Word8}
   deriving (Show)
 
 msgId :: Word8
@@ -25,8 +25,8 @@ msgId = 20
 extensionMsgId :: Word8
 extensionMsgId = 0
 
-instance Binary ExtensionHandshake where
-  put ExtensionHandshake {..} = do
+instance Binary Handshake where
+  put Handshake {..} = do
     Bin.putWord32be $ fromIntegral (dictSize + 2)
     Bin.putWord8 msgId
     Bin.putWord8 extensionMsgId
@@ -47,7 +47,7 @@ instance Binary ExtensionHandshake where
       case dict of
         BDict keyVals ->
           let innerDict = lookup "m" keyVals
-          in  pure ExtensionHandshake {extensions = bDictToMap innerDict}
+          in  pure Handshake {extensions = bDictToMap innerDict}
         _ -> error "expected a dictionary in extension handshake response"
 
 bDictToMap :: Maybe Bencode -> Map Text Word8

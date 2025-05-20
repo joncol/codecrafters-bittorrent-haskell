@@ -47,7 +47,7 @@ library:
     - AppMonad
     - Bencode.Types
     - Bencode.Util
-    - Messages.ExtensionHandshake
+    - Messages.Extensions.Handshake
     - Messages.PeerHandshake
     - Options
     - Torrent.Hash
