@@ -7,10 +7,10 @@ import Control.Monad.Except (throwError)
 import Control.Monad.Reader
 import Data.Aeson qualified as Aeson
 import Data.Attoparsec.ByteString (parseOnly)
+import Data.Binary qualified as Bin
 import Data.ByteString qualified as BS
 import Data.ByteString.Encoding qualified as BSE
 import Data.ByteString.Lazy qualified as BSL
-import Data.Either (fromRight)
 import Data.Map.Strict qualified as Map
 import Data.Maybe (fromMaybe)
 import Fmt
@@ -20,7 +20,7 @@ import System.IO
 import AppEnv
 import AppError
 import AppMonad
-import Bencode.Parser
+import Bencode.Types
 import Messages.ExtensionHandshake
 import Messages.PeerHandshake
 import Network
@@ -32,9 +32,8 @@ import Util
 
 runCommand :: Command -> AppM AppEnv IO ()
 runCommand (DecodeCommand encodedValue) = do
-  let decodedValue =
-        fromRight (error "parse error") $
-          parseOnly parseBencodeValue (BSE.encode BSE.latin1 encodedValue)
+  let decodedValue :: Bencode =
+        Bin.decode $ BSL.fromStrict (BSE.encode BSE.latin1 encodedValue)
       jsonValue = Aeson.encode decodedValue
   liftIO $ do
     BSL.putStr jsonValue

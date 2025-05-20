@@ -45,7 +45,6 @@ library:
     - App
     - AppEnv
     - AppMonad
-    - Bencode.Parser
     - Bencode.Types
     - Bencode.Util
     - Messages.ExtensionHandshake

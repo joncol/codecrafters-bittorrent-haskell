@@ -7,18 +7,15 @@ module Torrent.Info
 
 import Control.Monad.IO.Class
 import Crypto.Hash.SHA1 qualified as SHA1
-import Data.Attoparsec.ByteString
 import Data.Binary qualified as Bin
 import Data.ByteString qualified as BS
 import Data.ByteString.Encoding qualified as BSE
 import Data.ByteString.Lazy qualified as BSL
-import Data.Either (fromRight)
 import Data.Int (Int64)
 import Data.List.Split (chunksOf)
 import Data.Text (Text)
 import Data.Word (Word32)
 
-import Bencode.Parser
 import Bencode.Types
 import Bencode.Util
 import Torrent.Hash
@@ -38,9 +35,7 @@ getTorrentInfo :: MonadIO m => FilePath -> m TorrentInfo
 getTorrentInfo filename =
   do
     contents <- liftIO $ BS.readFile filename
-    let decodedValue =
-          fromRight (error "parse error") $
-            parseOnly parseBencodeValue contents
+    let decodedValue = Bin.decode $ BSL.fromStrict contents
         keyVals = case decodedValue of
           BDict keyVals' -> keyVals'
           _ -> error "torrent file is not a Bencoded dictionary"

@@ -2,7 +2,7 @@ module Bencode.Types
   ( Bencode (..)
   ) where
 
-import Control.Applicative (asum, many)
+import Control.Applicative (asum, many, (<|>))
 import Control.Monad (forM_, guard, void)
 import Data.Aeson qualified as A
 import Data.Aeson.Key qualified as A
@@ -97,10 +97,11 @@ getBDict = do
   pure $ BDict keyVals
 
 -- | Helper function to get an int encoded as decimal ASCII.
-getInt :: Integral a => Get a
+getInt :: forall a. Integral a => Get a
 getInt = do
-  void $ Bin.lookAhead getAsciiDigit
-  go 0
+  void . Bin.lookAhead $ void getAsciiDigit <|> void getSign
+  sign <- getSign
+  go 0 sign
   where
     getAsciiDigit = do
       c <- Bin.getWord8
@@ -108,15 +109,24 @@ getInt = do
         then pure c
         else fail "not an ASCII digit"
 
-    go acc = do
+    getSign :: Get a
+    getSign = do
+      c <- peek
+      if
+        | _0 <= c && c <= _9 -> pure 1
+        | c == _plus -> Bin.getWord8 >> pure 1
+        | c == _hyphen -> Bin.getWord8 >> pure -1
+        | otherwise -> fail "not a sign"
+
+    go acc sign = do
       c <- peek
       if _0 <= c && c <= _9
         then do
           void Bin.getWord8
           let n = fromIntegral $ c - _0
-          go $ acc * 10 + n
+          go (acc * 10 + n) sign
         else do
-          pure acc
+          pure $ acc * sign
 
 getKeyVal :: Get (Text, Bencode)
 getKeyVal = do

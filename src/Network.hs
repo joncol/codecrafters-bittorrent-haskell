@@ -13,7 +13,6 @@ import Control.Concurrent.Async
 import Control.Monad (forM_, void)
 import Control.Monad.Except (MonadError, throwError)
 import Control.Monad.IO.Class
-import Data.Attoparsec.ByteString (parseOnly)
 import Data.Binary qualified as Bin
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
@@ -42,7 +41,6 @@ import Text.URI
 import AppEnv
 import AppError
 import AppMonad
-import Bencode.Parser
 import Bencode.Types
 import Bencode.Util
 import Messages.BitField
@@ -97,8 +95,8 @@ getPeers myPeerId torrentInfo = runReq defaultHttpConfig $ do
     doReq url port = do
       resp <- reqCb GET url NoReqBody bsResponse (Req.port port) setQueryParams
 
-      case parseOnly parseBencodeValue $ responseBody resp of
-        Right (BDict keyVals) -> do
+      case Bin.decode . BSL.fromStrict $ responseBody resp of
+        BDict keyVals -> do
           let peersBStr = case getDictValue "peers" keyVals of
                 Just (BString str) -> str
                 _ -> error "tracker response did not contain `peers` field"

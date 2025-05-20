@@ -2,7 +2,7 @@ module Messages.ExtensionHandshake
   ( ExtensionHandshake (..)
   ) where
 
-import Control.Monad (guard, void)
+import Control.Monad (guard)
 import Data.Bifunctor (second)
 import Data.Binary (Binary)
 import Data.Binary qualified as Bin
@@ -37,17 +37,18 @@ instance Binary ExtensionHandshake where
       innerDict = BDict extensions'
       dictSize = BSL.length . Bin.runPut $ Bin.put dict
   get = do
-    void Bin.getWord32be
-    msgId' <- Bin.getWord8
-    guard $ msgId' == msgId
-    extensionMsgId' <- Bin.getWord8
-    guard $ extensionMsgId' == extensionMsgId
-    dict :: Bencode <- Bin.get
-    case dict of
-      BDict keyVals ->
-        let innerDict = lookup "m" keyVals
-        in  pure ExtensionHandshake {extensions = bDictToMap innerDict}
-      _ -> error "expected a dictionary in extension handshake response"
+    len <- Bin.getWord32be
+    Bin.isolate (fromIntegral len) $ do
+      msgId' <- Bin.getWord8
+      guard $ msgId' == msgId
+      extensionMsgId' <- Bin.getWord8
+      guard $ extensionMsgId' == extensionMsgId
+      dict :: Bencode <- Bin.get
+      case dict of
+        BDict keyVals ->
+          let innerDict = lookup "m" keyVals
+          in  pure ExtensionHandshake {extensions = bDictToMap innerDict}
+        _ -> error "expected a dictionary in extension handshake response"
 
 bDictToMap :: Maybe Bencode -> Map Text Word8
 bDictToMap (Just (BDict keyVals)) = Map.fromList $ map (second toInt) keyVals
