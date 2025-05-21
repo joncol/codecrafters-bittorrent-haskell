@@ -8,14 +8,11 @@ import Data.Binary (Binary)
 import Data.Binary qualified as Bin
 import Data.Binary.Get qualified as Bin
 import Data.Binary.Put qualified as Bin
-import Data.ByteString qualified as BS
 import Data.ByteString.Lazy qualified as BSL
 import Data.Int (Int64)
 import Data.Maybe (fromMaybe)
-import Data.Text (Text)
 import Data.Word (Word8)
 import Fmt
-import Safe (lookupJust)
 
 import Bencode.Types
 import Torrent.Hash
@@ -64,18 +61,14 @@ instance Binary Data where
       dict :: Bencode <- Bin.get
       pieceContents :: Bencode <- Bin.get
       case dict of
-        BDict keyVals -> do
-          let pieceIndexBencode = lookupJust "piece" keyVals
-              totalSizeBencode = lookupJust "total_size" keyVals
-          case (pieceIndexBencode, totalSizeBencode) of
-            (BInt pieceIndex, BInt totalSize) -> pure Data {..}
-            _ ->
-              error
-                "expected `piece` to be a BInt in response to \
-                \metadata data request"
-        _ ->
-          error
-            "expected a BDict in response to metadata data request"
+        BDict keyVals ->
+          pure
+            Data
+              { pieceIndex = lookupJustBInt "piece" keyVals
+              , totalSize = lookupJustBInt "total_size" keyVals
+              , ..
+              }
+        _ -> error "expected a BDict in response to metadata data request"
 
 printData :: MagnetLink -> Data -> IO ()
 printData magnetLink d
@@ -89,15 +82,3 @@ printData magnetLink d
       fmtLn "Piece Hashes:"
       fmtLn $ unlinesF pieceHashStrs
   | otherwise = error "invalid `pieceData` type, expected a BDict"
-
-lookupJustBInt :: Text -> [(Text, Bencode)] -> Int64
-lookupJustBInt key keyVals =
-  case lookupJust key keyVals of
-    BInt n -> n
-    _ -> error "expected a BInt"
-
-lookupJustBString :: Text -> [(Text, Bencode)] -> BS.ByteString
-lookupJustBString key keyVals =
-  case lookupJust key keyVals of
-    BString s -> s
-    _ -> error "expected a BString"

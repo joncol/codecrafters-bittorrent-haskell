@@ -27,6 +27,7 @@ data Command
   | MagnetParseCommand Text
   | MagnetHandshakeCommand Text
   | MagnetInfoCommand Text
+  | MagnetDownloadPieceCommand FilePath Text Int
   deriving (Show)
 
 options :: ParserInfo Options
@@ -107,6 +108,12 @@ optionsParser =
                     "Request metadata from peers, using a magnet link"
                 )
             )
+          <> Opt.command
+            "magnet_download_piece"
+            ( info
+                magnetDownloadPieceCommand
+                (progDesc "Download a piece of a torrent, using a magnet link")
+            )
       )
 
 decodeCommand :: Parser Command
@@ -149,3 +156,9 @@ magnetHandshakeCommand =
 magnetInfoCommand :: Parser Command
 magnetInfoCommand = MagnetInfoCommand <$> strArgument (metavar "MAGNET_LINK")
 
+magnetDownloadPieceCommand :: Parser Command
+magnetDownloadPieceCommand =
+  MagnetDownloadPieceCommand . T.unpack
+    <$> strOption (short 'o' <> metavar "OUTPUT_FILENAME")
+    <*> strArgument (metavar "MAGNET_LINK")
+    <*> argument auto (metavar "PIECE_INDEX")

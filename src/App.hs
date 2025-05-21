@@ -103,6 +103,38 @@ runCommand (MagnetInfoCommand magnetLinkStr) = do
           data' :: Metadata.Data <- recv socket
           Metadata.printData magnetLink data'
     Left err -> error $ "parser error: " <> err
+runCommand
+  ( MagnetDownloadPieceCommand
+      outputFilename
+      magnetLinkStr
+      pieceIndex
+    ) = do
+    case parseOnly parseMagnetLink $ BSE.encode BSE.latin1 magnetLinkStr of
+      Right magnetLink -> do
+        let torrentInfo = magnetLinkToTorrentInfo magnetLink
+        peerAddress <- getPeerAddress torrentInfo
+        (socket, (handshakeResp, leftovers)) <-
+          doHandshake magnetLink.infoHash peerAddress
+        when handshakeResp.hasExtensionSupport $ do
+          metadataId <- doExtensionHandshake socket leftovers
+          sendMetadataRequest socket metadataId
+          data' :: Metadata.Data <- liftIO $ recv socket
+          let torrentInfo' =
+                case data'.pieceContents of
+                  BDict keyVals ->
+                    let pieceLength =
+                          fromIntegral $ lookupJustBInt "piece length" keyVals
+                        fileLength = lookupJustBInt "length" keyVals
+                        pieceHashes =
+                          map Hash . chunksOfBs 20 $
+                            lookupJustBString "pieces" keyVals
+                    in  torrentInfo {fileLength, pieceLength, pieceHashes}
+                  _ -> error "invalid metadata"
+          sendInterested socket
+          pieceData <- downloadPiece socket torrentInfo' pieceIndex
+          liftIO . withFile outputFilename WriteMode $
+            \hOut -> BS.hPut hOut pieceData
+      Left err -> error $ "parser error: " <> err
 
 magnetLinkToTorrentInfo :: MagnetLink -> TorrentInfo
 magnetLinkToTorrentInfo magnetLink =

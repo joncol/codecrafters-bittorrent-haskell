@@ -1,5 +1,7 @@
 module Bencode.Types
   ( Bencode (..)
+  , lookupJustBInt
+  , lookupJustBString
   ) where
 
 import Control.Applicative (asum, many, (<|>))
@@ -23,6 +25,7 @@ import Data.List (sortOn)
 import Data.Text (Text)
 import Data.Vector qualified as V
 import Data.Word8
+import Safe (lookupJust)
 
 data Bencode
   = BString BS.ByteString
@@ -141,3 +144,15 @@ peek = do
   BinInt.ensureN 1
   BSU.unsafeHead <$> BinInt.get
 {-# INLINE peek #-}
+
+lookupJustBInt :: Text -> [(Text, Bencode)] -> Int64
+lookupJustBInt key keyVals =
+  case lookupJust key keyVals of
+    BInt n -> n
+    _ -> error "expected a BInt"
+
+lookupJustBString :: Text -> [(Text, Bencode)] -> BS.ByteString
+lookupJustBString key keyVals =
+  case lookupJust key keyVals of
+    BString s -> s
+    _ -> error "expected a BString"
