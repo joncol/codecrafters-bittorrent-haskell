@@ -12,13 +12,14 @@ module Network
   ) where
 
 import Control.Concurrent.Async
-import Control.Monad (forM_, void)
+import Control.Monad (forM, forM_, void, when)
 import Control.Monad.Except (MonadError, throwError)
 import Control.Monad.IO.Class
 import Data.Binary qualified as Bin
 import Data.ByteString qualified as BS
 import Data.ByteString.Char8 qualified as BS8
 import Data.ByteString.Lazy qualified as BSL
+import Data.Foldable (foldMap')
 import Data.Function (on)
 import Data.List (sortOn)
 import Data.Map.Strict qualified as Map
@@ -26,6 +27,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Word (Word8)
+import Fmt
 import Lens.Family.State.Strict (zoom)
 import Net.IPv4 qualified as IPv4
 import Network.HTTP.Client (Request (..))
@@ -122,6 +124,7 @@ doHandshake
   -> PeerAddress
   -> AppM AppEnv m (Socket, (PeerHandshake, P.Producer BS.ByteString IO ()))
 doHandshake infoHash (PeerAddress {host, port}) = do
+  liftIO . putStrLn $ "-> doHandshake, " <> IPv4.encodeString host <> ":" <> show port
   (socket, _) <- NS.connectSock (IPv4.encodeString host) (show port)
   liftIO $ sendHandshakeMessage socket
   (mResult, leftovers) <-
@@ -197,6 +200,7 @@ sendInterested :: forall m. MonadIO m => Socket -> m ()
 sendInterested socket = do
   liftIO $ send socket Interested
   void $ P.execStateT decodeUnchoke $ P.fromSocket socket bufferSize
+  liftIO . putStrLn $ "decoded unchoke on socket: " <> show socket
   where
     decodeUnchoke :: P.Parser BS.ByteString m (Either P.DecodingError Unchoke)
     decodeUnchoke = P.decode
@@ -208,14 +212,48 @@ sendInterested socket = do
 downloadPiece
   :: MonadIO m
   => Socket
+  -> P.Producer BS.ByteString IO ()
   -> TorrentInfo
   -> Int
   -> m BS.ByteString
-downloadPiece socket torrentInfo pieceIndex =
+downloadPiece socket leftovers torrentInfo pieceIndex =
   liftIO $ do
+    putStrLn $ "-> downloadPiece, socket: " <> show socket
+    putStrLn $ "  pieceIndex: " <> show pieceIndex
+
     requestBlocks
-    subPieces <- P.evalStateT decodeSubPieces $ P.fromSocket socket bufferSize
-    pure $ foldMap block subPieces
+
+    putStrLn "requested blocks"
+
+    subPieces <- P.evalStateT decodeSubPieces $ do
+      -- leftovers
+      P.fromSocket socket bufferSize
+
+    -- subPieces <- P.evalStateT decodeSubPiece $ do
+    --   P.fromSocket socket bufferSize
+
+    -- case subPieces of
+    --   Right sp -> do
+    --     fmtLn $ "sub piece received: "
+    --     fmtLn $ "  msgLen: " +| hexF sp.msgLen |+ ""
+    --     fmtLn $ "  msgId: " +| hexF sp.mid |+ ""
+    --     fmtLn $ "  index: " +| hexF sp.index |+ ""
+    --     fmtLn $ "  begin: " +| hexF sp.begin |+ ""
+    --   Left e -> putStrLn $ "decoding error: " <> show e
+
+    -- if (null subPieces)
+    --   then putStrLn "NO SUBPIECES RECEIVED"
+    --   else putStrLn $ "SUBPIECES COUNT: " <> show (length subPieces)
+
+    forM_ subPieces $ \sp -> do
+      fmtLn "sub piece received: "
+      fmtLn $ "  msgLen: " +| hexF sp.msgLen |+ ""
+      fmtLn $ "  msgId: " +| hexF sp.mid |+ ""
+      fmtLn $ "  index: " +| hexF sp.index |+ ""
+      fmtLn $ "  begin: " +| hexF sp.begin |+ ""
+
+    pure $ foldMap' block subPieces
+    -- pure $ foldMap' block []
   where
     blockLength = 16384
 
@@ -228,6 +266,12 @@ downloadPiece socket torrentInfo pieceIndex =
             replicate wholeBlockCount blockLength
               <> [lastBlockLength | lastBlockLength > 0]
 
+      -- putStrLn $ "pieceLen: " <> show pieceLen
+      -- putStrLn $ "wholeBlockCount: " <> show wholeBlockCount
+      -- putStrLn $ "lastBlockLength: " <> show lastBlockLength
+      -- putStrLn $ "blockLength: " <> show blockLength
+      -- putStrLn $ "blockLengths: " <> show blockLengths
+
       forM_ ([0 ..] `zip` blockLengths) $ \(n, len) ->
         send
           socket
@@ -236,6 +280,9 @@ downloadPiece socket torrentInfo pieceIndex =
             , begin = n * fromIntegral blockLength
             , len = fromIntegral len
             }
+
+    decodeSubPiece :: P.Parser BS.ByteString IO (Either P.DecodingError Piece)
+    decodeSubPiece = P.decode
 
     decodeSubPieces :: P.Parser BS.ByteString IO [Piece]
     decodeSubPieces = zoom (P.decoded . P.splitAt blockCount) P.drawAll
@@ -250,13 +297,16 @@ downloadPiece socket torrentInfo pieceIndex =
 download
   :: forall m
    . MonadIO m
-  => [Socket]
+  => [(Socket, P.Producer BS.ByteString IO ())]
   -> FilePath
   -> TorrentInfo
   -> AppM AppEnv m ()
-download sockets outputFilename torrentInfo = do
+download socketsAndLeftovers outputFilename torrentInfo = do
+  liftIO $ do
+    putStrLn "-> download"
+    putStrLn $ "torrentInfo: " <> show torrentInfo
   let pieceCount = length torrentInfo.pieceHashes
-  pieces <- go [0 .. pieceCount] []
+  pieces <- go [0 .. pieceCount - 1] []
   liftIO $ do
     withFile outputFilename WriteMode . const $ pure () -- Truncate file.
     withFile outputFilename AppendMode $ \hOut ->
@@ -268,8 +318,16 @@ download sockets outputFilename torrentInfo = do
       -> AppM AppEnv m [(Int, BS.ByteString)]
     go [] acc = pure acc
     go unfinishedPieces acc = do
-      results <- liftIO . forConcurrently (unfinishedPieces `zip` sockets) $
-        \(pieceIndex, socket) ->
-          (pieceIndex,) <$> downloadPiece socket torrentInfo pieceIndex
-      let rest = drop (length sockets) unfinishedPieces
+      liftIO $ do
+        putStrLn "-> go"
+        putStrLn $ "  unfinishedPieces: " <> show unfinishedPieces
+      results <- liftIO . forM (unfinishedPieces `zip` socketsAndLeftovers) $
+        \(pieceIndex, (socket, leftovers)) ->
+          (pieceIndex,) <$> downloadPiece socket leftovers torrentInfo pieceIndex
+      -- results <- liftIO . forConcurrently (unfinishedPieces `zip` sockets) $
+      --   \(pieceIndex, socket) ->
+      --     (pieceIndex,) <$> downloadPiece socket torrentInfo pieceIndex
+      forM_ results $ \(i, bs) -> do
+        liftIO $ print (i, BS.length bs)
+      let rest = drop (length socketsAndLeftovers) unfinishedPieces
       go rest $ acc <> results

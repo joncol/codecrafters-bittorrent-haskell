@@ -13,6 +13,7 @@ import Data.ByteString.Encoding qualified as BSE
 import Data.ByteString.Lazy qualified as BSL
 import Data.Maybe (fromMaybe)
 import Fmt
+import Network.Socket (close)
 import Safe (headErr)
 import System.IO
 
@@ -57,18 +58,18 @@ runCommand (DownloadPieceCommand outputFilename torrentFilename pieceIndex) = do
   pieceData <- do
     (socket, _) <- doHandshake torrentInfo.infoHash peerAddress
     sendInterested socket
-    downloadPiece socket torrentInfo pieceIndex
+    downloadPiece socket mempty torrentInfo pieceIndex
   liftIO . withFile outputFilename WriteMode $
     \hOut -> BS.hPut hOut pieceData
 runCommand (DownloadCommand outputFilename torrentFilename) = do
   torrentInfo <- getTorrentInfo torrentFilename
   myPeerId <- asks myPeerId
   peers <- getPeers myPeerId torrentInfo
-  sockets <- forM peers $ \peer -> do
-    (socket, _) <- doHandshake torrentInfo.infoHash peer
+  socketsAndLeftovers <- forM peers $ \peer -> do
+    (socket, (_, leftovers)) <- doHandshake torrentInfo.infoHash peer
     sendInterested socket
-    pure socket
-  download sockets outputFilename torrentInfo
+    pure (socket, leftovers)
+  download socketsAndLeftovers outputFilename torrentInfo
 runCommand (MagnetParseCommand magnetLinkStr) = do
   case parseOnly parseMagnetLink $ BSE.encode BSE.latin1 magnetLinkStr of
     Right magnetLink -> liftIO $ do
@@ -96,6 +97,7 @@ runCommand (MagnetInfoCommand magnetLinkStr) = do
       peerAddress <- getPeerAddress $ magnetLinkToTorrentInfo magnetLink
       (socket, (handshakeResp, leftovers)) <-
         doHandshake magnetLink.infoHash peerAddress
+      liftIO $ print handshakeResp
       when handshakeResp.hasExtensionSupport $ do
         metadataId <- doExtensionHandshake socket leftovers
         sendMetadataRequest socket metadataId
@@ -131,10 +133,47 @@ runCommand
                     in  torrentInfo {fileLength, pieceLength, pieceHashes}
                   _ -> error "invalid metadata"
           sendInterested socket
-          pieceData <- downloadPiece socket torrentInfo' pieceIndex
+          pieceData <- downloadPiece socket mempty torrentInfo' pieceIndex
           liftIO . withFile outputFilename WriteMode $
             \hOut -> BS.hPut hOut pieceData
       Left err -> error $ "parser error: " <> err
+runCommand (MagnetDownloadCommand outputFilename magnetLinkStr) = do
+  case parseOnly parseMagnetLink $ BSE.encode BSE.latin1 magnetLinkStr of
+    Right magnetLink -> do
+      -- First do base handshake with the first peer.
+      let torrentInfo = magnetLinkToTorrentInfo magnetLink
+      peerAddress <- getPeerAddress torrentInfo
+      (socket, (handshakeResp, leftovers)) <-
+        doHandshake magnetLink.infoHash peerAddress
+
+      -- When the peer has extension support, we do an extension handshake with
+      -- it, to be able to get a hold of the needed torrent metadata.
+      when handshakeResp.hasExtensionSupport $ do
+        metadataId <- doExtensionHandshake socket leftovers
+        sendMetadataRequest socket metadataId
+        data' :: Metadata.Data <- liftIO $ recv socket
+        let torrentInfo' =
+              case data'.pieceContents of
+                BDict keyVals ->
+                  let pieceLength =
+                        fromIntegral $ lookupJustBInt "piece length" keyVals
+                      fileLength = lookupJustBInt "length" keyVals
+                      pieceHashes =
+                        map Hash . chunksOfBs 20 $
+                          lookupJustBString "pieces" keyVals
+                  in  torrentInfo {fileLength, pieceLength, pieceHashes}
+                _ -> error "invalid metadata"
+        liftIO $ do
+          putStrLn $ "closing socket: " <> show socket
+          close socket
+        myPeerId <- asks myPeerId
+        peers <- getPeers myPeerId torrentInfo'
+        socketsAndLeftovers <- forM peers $ \peer -> do
+          (socket', (_, leftovers')) <- doHandshake torrentInfo'.infoHash peer
+          sendInterested socket'
+          pure (socket', leftovers')
+        download socketsAndLeftovers outputFilename torrentInfo'
+    Left err -> error $ "parser error: " <> err
 
 magnetLinkToTorrentInfo :: MagnetLink -> TorrentInfo
 magnetLinkToTorrentInfo magnetLink =
