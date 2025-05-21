@@ -3,6 +3,7 @@ module Torrent.Info
   , getTorrentInfo
   , Hash (..)
   , getPieceLength
+  , printTorrentInfo
   ) where
 
 import Control.Monad.IO.Class
@@ -12,13 +13,14 @@ import Data.ByteString qualified as BS
 import Data.ByteString.Encoding qualified as BSE
 import Data.ByteString.Lazy qualified as BSL
 import Data.Int (Int64)
-import Data.List.Split (chunksOf)
 import Data.Text (Text)
 import Data.Word (Word32)
+import Fmt
 
 import Bencode.Types
 import Bencode.Util
 import Torrent.Hash
+import Util
 
 data TorrentInfo = TorrentInfo
   { trackerUrl :: Text
@@ -54,7 +56,7 @@ getTorrentInfo filename =
           Just (BInt len') -> fromIntegral len'
           _ -> error "no piece length field in info dictionary"
         pieceHashes = case getDictValue "pieces" infoKeyVals of
-          Just (BString s) -> map (Hash . BS.pack) . chunksOf 20 $ BS.unpack s
+          Just (BString s) -> map Hash $ chunksOfBs 20 s
           _ -> error "no piece length field in info dictionary"
      in pure TorrentInfo {..}
 
@@ -74,3 +76,13 @@ getPieceLength torrentInfo pieceIndex
       ceiling $
         (fromIntegral torrentInfo.fileLength :: Double)
           / (fromIntegral torrentInfo.pieceLength :: Double)
+
+printTorrentInfo :: TorrentInfo -> IO ()
+printTorrentInfo torrentInfo = do
+  let pieceHashStrs :: [String] = map show torrentInfo.pieceHashes
+  fmtLn $ "Tracker URL: " +| torrentInfo.trackerUrl |+ ""
+  fmtLn $ "Length: " +| torrentInfo.fileLength |+ ""
+  fmtLn $ "Info Hash: " +|| torrentInfo.infoHash ||+ ""
+  fmtLn $ "Piece Length: " +| torrentInfo.pieceLength |+ ""
+  fmtLn "Piece Hashes:"
+  fmtLn $ unlinesF pieceHashStrs

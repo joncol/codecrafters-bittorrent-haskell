@@ -26,7 +26,6 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Word (Word8)
-import Fmt
 import Lens.Family.State.Strict (zoom)
 import Net.IPv4 qualified as IPv4
 import Network.HTTP.Client (Request (..))
@@ -67,19 +66,10 @@ bufferSize = 4096
 send :: Bin.Binary a => Socket -> a -> IO ()
 send socket = NS.send socket . BSL.toStrict . Bin.encode
 
--- -- | Helper function that decodes a message received from a socket.
--- recv :: Bin.Binary a => Socket -> IO a
--- recv socket =
---   Bin.decode . BSL.fromStrict <$> N.recv socket bufferSize
-
 -- | Helper function that decodes a message received from a socket.
 recv :: Bin.Binary a => Socket -> IO a
-recv socket = do
-  -- Bin.decode . BSL.fromStrict <$> N.recv socket bufferSize
-  bs <- N.recv socket bufferSize
-  fmtLn $ "recv bs: " +| foldMap byteF (BS.unpack bs) |+ ""
-  fmtLn $ "recv " +| BS.length bs |+ " bytes"
-  pure . Bin.decode $ BSL.fromStrict bs
+recv socket =
+  Bin.decode . BSL.fromStrict <$> N.recv socket bufferSize
 
 -- | Make a GET request to the torrent tracker to get a list of peers.
 getPeers :: MonadIO m => Text -> TorrentInfo -> m [PeerAddress]

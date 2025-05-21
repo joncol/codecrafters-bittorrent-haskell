@@ -83,7 +83,6 @@ library:
     - random
     - req
     - safe
-    - split
     - text
     - text-show
     - time

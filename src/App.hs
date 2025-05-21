@@ -20,6 +20,7 @@ import AppEnv
 import AppError
 import AppMonad
 import Bencode.Types
+import Messages.Extensions.Metadata.Data qualified as Metadata
 import Messages.PeerHandshake
 import Network
 import Options
@@ -98,6 +99,9 @@ runCommand (MagnetInfoCommand magnetLinkStr) = do
       when handshakeResp.hasExtensionSupport $ do
         metadataId <- doExtensionHandshake socket leftovers
         sendMetadataRequest socket metadataId
+        liftIO $ do
+          data' :: Metadata.Data <- recv socket
+          Metadata.printData magnetLink data'
     Left err -> error $ "parser error: " <> err
 
 magnetLinkToTorrentInfo :: MagnetLink -> TorrentInfo
@@ -109,16 +113,6 @@ magnetLinkToTorrentInfo magnetLink =
     , pieceLength = 0
     , pieceHashes = []
     }
-
-printTorrentInfo :: TorrentInfo -> IO ()
-printTorrentInfo torrentInfo = do
-  let pieceHashes :: [String] = map show torrentInfo.pieceHashes
-  fmtLn $ "Tracker URL: " +| torrentInfo.trackerUrl |+ ""
-  fmtLn $ "Length: " +| torrentInfo.fileLength |+ ""
-  fmtLn $ "Info Hash: " +|| torrentInfo.infoHash ||+ ""
-  fmtLn $ "Piece Length: " +| torrentInfo.pieceLength |+ ""
-  fmtLn "Piece Hashes:"
-  fmtLn $ unlinesF pieceHashes
 
 getPeerAddress :: TorrentInfo -> AppM AppEnv IO PeerAddress
 getPeerAddress torrentInfo = do
