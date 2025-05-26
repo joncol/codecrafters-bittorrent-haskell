@@ -49,7 +49,7 @@ runCommand (PeersCommand filename) = do
     >>= \peers -> liftIO . fmtLn $ unlinesF (map show peers)
 runCommand (HandshakeCommand filename peerAddress) = do
   torrentInfo <- getTorrentInfo filename
-  (_, (handshakeResp, _)) <- doHandshake torrentInfo.infoHash peerAddress
+  (_, handshakeResp) <- doHandshake torrentInfo.infoHash peerAddress
   liftIO . fmtLn $
     "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
 runCommand (DownloadPieceCommand outputFilename torrentFilename pieceIndex) = do
@@ -58,18 +58,18 @@ runCommand (DownloadPieceCommand outputFilename torrentFilename pieceIndex) = do
   pieceData <- do
     (socket, _) <- doHandshake torrentInfo.infoHash peerAddress
     sendInterested socket
-    downloadPiece socket mempty torrentInfo pieceIndex
+    downloadPiece socket torrentInfo pieceIndex
   liftIO . withFile outputFilename WriteMode $
     \hOut -> BS.hPut hOut pieceData
 runCommand (DownloadCommand outputFilename torrentFilename) = do
   torrentInfo <- getTorrentInfo torrentFilename
   myPeerId <- asks myPeerId
   peers <- getPeers myPeerId torrentInfo
-  socketsAndLeftovers <- forM peers $ \peer -> do
-    (socket, (_, leftovers)) <- doHandshake torrentInfo.infoHash peer
+  sockets <- forM peers $ \peer -> do
+    (socket, handshakeResp) <- doHandshake torrentInfo.infoHash peer
     sendInterested socket
-    pure (socket, leftovers)
-  download socketsAndLeftovers outputFilename torrentInfo
+    pure socket
+  download sockets outputFilename torrentInfo
 runCommand (MagnetParseCommand magnetLinkStr) = do
   case parseOnly parseMagnetLink $ BSE.encode BSE.latin1 magnetLinkStr of
     Right magnetLink -> liftIO $ do
@@ -80,26 +80,24 @@ runCommand (MagnetHandshakeCommand magnetLinkStr) = do
   case parseOnly parseMagnetLink $ BSE.encode BSE.latin1 magnetLinkStr of
     Right magnetLink -> do
       peerAddress <- getPeerAddress $ magnetLinkToTorrentInfo magnetLink
-      (socket, (handshakeResp, leftovers)) <-
-        doHandshake magnetLink.infoHash peerAddress
+      (socket, handshakeResp) <- doHandshake magnetLink.infoHash peerAddress
 
       liftIO
         . fmtLn
         $ "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
 
       when handshakeResp.hasExtensionSupport $ do
-        metadataId <- doExtensionHandshake socket leftovers
+        metadataId <- doExtensionHandshake socket
         liftIO . fmtLn $ "Peer Metadata Extension ID: " +| metadataId |+ ""
     Left err -> error $ "parser error: " <> err
 runCommand (MagnetInfoCommand magnetLinkStr) = do
   case parseOnly parseMagnetLink $ BSE.encode BSE.latin1 magnetLinkStr of
     Right magnetLink -> do
       peerAddress <- getPeerAddress $ magnetLinkToTorrentInfo magnetLink
-      (socket, (handshakeResp, leftovers)) <-
-        doHandshake magnetLink.infoHash peerAddress
+      (socket, handshakeResp) <- doHandshake magnetLink.infoHash peerAddress
       liftIO $ print handshakeResp
       when handshakeResp.hasExtensionSupport $ do
-        metadataId <- doExtensionHandshake socket leftovers
+        metadataId <- doExtensionHandshake socket
         sendMetadataRequest socket metadataId
         liftIO $ do
           data' :: Metadata.Data <- recv socket
@@ -115,10 +113,10 @@ runCommand
       Right magnetLink -> do
         let torrentInfo = magnetLinkToTorrentInfo magnetLink
         peerAddress <- getPeerAddress torrentInfo
-        (socket, (handshakeResp, leftovers)) <-
+        (socket, handshakeResp) <-
           doHandshake magnetLink.infoHash peerAddress
         when handshakeResp.hasExtensionSupport $ do
-          metadataId <- doExtensionHandshake socket leftovers
+          metadataId <- doExtensionHandshake socket
           sendMetadataRequest socket metadataId
           data' :: Metadata.Data <- liftIO $ recv socket
           let torrentInfo' =
@@ -133,7 +131,7 @@ runCommand
                     in  torrentInfo {fileLength, pieceLength, pieceHashes}
                   _ -> error "invalid metadata"
           sendInterested socket
-          pieceData <- downloadPiece socket mempty torrentInfo' pieceIndex
+          pieceData <- downloadPiece socket torrentInfo' pieceIndex
           liftIO . withFile outputFilename WriteMode $
             \hOut -> BS.hPut hOut pieceData
       Left err -> error $ "parser error: " <> err
@@ -143,13 +141,13 @@ runCommand (MagnetDownloadCommand outputFilename magnetLinkStr) = do
       -- First do base handshake with the first peer.
       let torrentInfo = magnetLinkToTorrentInfo magnetLink
       peerAddress <- getPeerAddress torrentInfo
-      (socket, (handshakeResp, leftovers)) <-
+      (socket, handshakeResp) <-
         doHandshake magnetLink.infoHash peerAddress
 
       -- When the peer has extension support, we do an extension handshake with
       -- it, to be able to get a hold of the needed torrent metadata.
       when handshakeResp.hasExtensionSupport $ do
-        metadataId <- doExtensionHandshake socket leftovers
+        metadataId <- doExtensionHandshake socket
         sendMetadataRequest socket metadataId
         data' :: Metadata.Data <- liftIO $ recv socket
         let torrentInfo' =
@@ -168,11 +166,11 @@ runCommand (MagnetDownloadCommand outputFilename magnetLinkStr) = do
           close socket
         myPeerId <- asks myPeerId
         peers <- getPeers myPeerId torrentInfo'
-        socketsAndLeftovers <- forM peers $ \peer -> do
-          (socket', (_, leftovers')) <- doHandshake torrentInfo'.infoHash peer
+        sockets <- forM peers $ \peer -> do
+          (socket', _) <- doHandshake torrentInfo'.infoHash peer
           sendInterested socket'
-          pure (socket', leftovers')
-        download socketsAndLeftovers outputFilename torrentInfo'
+          pure socket'
+        download sockets outputFilename torrentInfo'
     Left err -> error $ "parser error: " <> err
 
 magnetLinkToTorrentInfo :: MagnetLink -> TorrentInfo

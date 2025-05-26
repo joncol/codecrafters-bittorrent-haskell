@@ -13,11 +13,13 @@ module Network
 
 import Control.Concurrent.Async
 import Control.Monad (forM, forM_, void, when)
-import Control.Monad.Except (MonadError, throwError)
+import Control.Monad.Except
 import Control.Monad.IO.Class
 import Data.Binary qualified as Bin
 import Data.ByteString qualified as BS
+import Data.ByteString.Base16 qualified as BSB16
 import Data.ByteString.Char8 qualified as BS8
+import Data.ByteString.Encoding qualified as BSE
 import Data.ByteString.Lazy qualified as BSL
 import Data.Foldable (foldMap')
 import Data.Function (on)
@@ -37,9 +39,11 @@ import Network.HTTP.Types.URI (renderSimpleQuery)
 import Network.Simple.TCP (Socket)
 import Network.Simple.TCP qualified as NS
 import Network.Socket.ByteString qualified as N
+import Pipes ((>->))
 import Pipes.Binary qualified as P
 import Pipes.Network.TCP qualified as P
 import Pipes.Parse qualified as P
+import Pipes.Prelude qualified as P
 import System.IO
 import Text.URI
 
@@ -118,27 +122,26 @@ getPeers myPeerId torrentInfo = runReq defaultHttpConfig $ do
               ]
       in  pure request {queryString}
 
+-- | Does a peer handshake and waits for a "bitfield" message.
 doHandshake
   :: MonadIO m
   => Hash
   -> PeerAddress
-  -> AppM AppEnv m (Socket, (PeerHandshake, P.Producer BS.ByteString IO ()))
+  -> AppM AppEnv m (Socket, PeerHandshake)
 doHandshake infoHash (PeerAddress {host, port}) = do
   liftIO . putStrLn $ "-> doHandshake, " <> IPv4.encodeString host <> ":" <> show port
   (socket, _) <- NS.connectSock (IPv4.encodeString host) (show port)
   liftIO $ sendHandshakeMessage socket
-  (mResult, leftovers) <-
-    liftIO
-      . P.runStateT decodeHandshakeMessage
-      $ P.fromSocket socket bufferSize
-  case mResult of
-    Left (P.DecodingError _ msg) -> throwError $ DecodingError (T.pack msg)
-    Right peerHandshake -> do
-      -- We must account for any leftovers from the handshake here.
-      leftovers' <- liftIO . P.execStateT decodeBitField $ do
-        leftovers
+  mResult <-
+    liftIO . P.evalStateT decodeHandshakeMessage $
+      do
         P.fromSocket socket bufferSize
-      pure (socket, (peerHandshake, leftovers'))
+        >-> P.tee (P.map (BSE.decode BSE.latin1 . BSB16.encode) >-> P.print)
+
+  liftIO $ putStrLn "handshake completed"
+
+  -- Lift the 'Either' value into a 'MonadError AppError'.
+  liftEither ((socket,) <$> mResult)
   where
     sendHandshakeMessage :: Socket -> IO ()
     sendHandshakeMessage socket = do
@@ -152,22 +155,23 @@ doHandshake infoHash (PeerAddress {host, port}) = do
           }
 
     decodeHandshakeMessage
-      :: P.Parser BS.ByteString IO (Either P.DecodingError PeerHandshake)
-    decodeHandshakeMessage = P.decode
-
-    decodeBitField
-      :: P.Parser BS.ByteString IO (Either P.DecodingError BitField)
-    decodeBitField = P.decode
+      :: P.Parser BS.ByteString IO (Either AppError PeerHandshake)
+    decodeHandshakeMessage = do
+      runExceptT . withExceptT transformError $ do
+        peerHandshake <- ExceptT P.decode
+        _bitField :: BitField <- ExceptT P.decode -- TODO: Can we use 'void' instead?
+        pure peerHandshake
+      where
+        transformError (P.DecodingError _ msg) = DecodingError (T.pack msg)
 
 doExtensionHandshake
   :: (MonadIO m, MonadError AppError m)
   => Socket
-  -> P.Producer BS.ByteString IO ()
   -> m Word8
-doExtensionHandshake socket leftovers = do
+doExtensionHandshake socket = do
   let extensions = Map.fromList [("ut_metadata", 16)]
   liftIO $ send socket Handshake {extensions}
-  extensionHandshakeResp <- recvExtensionHandshake socket leftovers
+  extensionHandshakeResp <- recvExtensionHandshake socket
   pure . fromMaybe 0 $
     Map.lookup "ut_metadata" extensionHandshakeResp.extensions
 
@@ -177,11 +181,9 @@ recvExtensionHandshake
   :: forall m
    . (MonadIO m, MonadError AppError m)
   => Socket
-  -> P.Producer BS.ByteString IO ()
   -> m Handshake
-recvExtensionHandshake socket leftovers = do
-  mResult <- liftIO . P.evalStateT decodeExtensionHandshakeMessage $ do
-    leftovers
+recvExtensionHandshake socket = do
+  mResult <- liftIO . P.evalStateT decodeExtensionHandshakeMessage $
     P.fromSocket socket bufferSize
   case mResult of
     Left (P.DecodingError _ msg) -> throwError $ DecodingError (T.pack msg)
@@ -212,11 +214,10 @@ sendInterested socket = do
 downloadPiece
   :: MonadIO m
   => Socket
-  -> P.Producer BS.ByteString IO ()
   -> TorrentInfo
   -> Int
   -> m BS.ByteString
-downloadPiece socket leftovers torrentInfo pieceIndex =
+downloadPiece socket torrentInfo pieceIndex =
   liftIO $ do
     putStrLn $ "-> downloadPiece, socket: " <> show socket
     putStrLn $ "  pieceIndex: " <> show pieceIndex
@@ -253,8 +254,9 @@ downloadPiece socket leftovers torrentInfo pieceIndex =
       fmtLn $ "  begin: " +| hexF sp.begin |+ ""
 
     pure $ foldMap' block subPieces
-    -- pure $ foldMap' block []
   where
+    -- pure $ foldMap' block []
+
     blockLength = 16384
 
     pieceLen = getPieceLength torrentInfo pieceIndex
@@ -297,11 +299,11 @@ downloadPiece socket leftovers torrentInfo pieceIndex =
 download
   :: forall m
    . MonadIO m
-  => [(Socket, P.Producer BS.ByteString IO ())]
+  => [Socket]
   -> FilePath
   -> TorrentInfo
   -> AppM AppEnv m ()
-download socketsAndLeftovers outputFilename torrentInfo = do
+download sockets outputFilename torrentInfo = do
   liftIO $ do
     putStrLn "-> download"
     putStrLn $ "torrentInfo: " <> show torrentInfo
@@ -321,13 +323,13 @@ download socketsAndLeftovers outputFilename torrentInfo = do
       liftIO $ do
         putStrLn "-> go"
         putStrLn $ "  unfinishedPieces: " <> show unfinishedPieces
-      results <- liftIO . forM (unfinishedPieces `zip` socketsAndLeftovers) $
-        \(pieceIndex, (socket, leftovers)) ->
-          (pieceIndex,) <$> downloadPiece socket leftovers torrentInfo pieceIndex
+      results <- liftIO . forM (unfinishedPieces `zip` sockets) $
+        \(pieceIndex, socket) ->
+          (pieceIndex,) <$> downloadPiece socket torrentInfo pieceIndex
       -- results <- liftIO . forConcurrently (unfinishedPieces `zip` sockets) $
       --   \(pieceIndex, socket) ->
       --     (pieceIndex,) <$> downloadPiece socket torrentInfo pieceIndex
       forM_ results $ \(i, bs) -> do
         liftIO $ print (i, BS.length bs)
-      let rest = drop (length socketsAndLeftovers) unfinishedPieces
+      let rest = drop (length sockets) unfinishedPieces
       go rest $ acc <> results
