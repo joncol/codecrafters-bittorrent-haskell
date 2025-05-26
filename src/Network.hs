@@ -3,16 +3,16 @@ module Network
   , recv
   , getPeers
   , doHandshake
-  , doExtensionHandshake
   , recvExtensionHandshake
   , sendMetadataRequest
   , sendInterested
+  , recvUnchoke
   , downloadPiece
   , download
   ) where
 
 import Control.Concurrent.Async
-import Control.Monad (forM, forM_, void, when)
+import Control.Monad (forM, forM_, void)
 import Control.Monad.Except
 import Control.Monad.IO.Class
 import Data.Binary qualified as Bin
@@ -53,7 +53,7 @@ import AppMonad
 import Bencode.Types
 import Bencode.Util
 import Messages.BitField
-import Messages.Extensions.Handshake
+import Messages.Extensions.Handshake qualified as Extensions
 import Messages.Extensions.Metadata.Request qualified as Metadata
 import Messages.Interested
 import Messages.PeerHandshake
@@ -127,21 +127,31 @@ doHandshake
   :: MonadIO m
   => Hash
   -> PeerAddress
-  -> AppM AppEnv m (Socket, PeerHandshake)
+  -> AppM AppEnv m (Socket, (PeerHandshake, Maybe Word8))
 doHandshake infoHash (PeerAddress {host, port}) = do
   liftIO . putStrLn $ "-> doHandshake, " <> IPv4.encodeString host <> ":" <> show port
   (socket, _) <- NS.connectSock (IPv4.encodeString host) (show port)
   liftIO $ sendHandshakeMessage socket
-  mResult <-
-    liftIO . P.evalStateT decodeHandshakeMessage $
-      do
-        P.fromSocket socket bufferSize
-        >-> P.tee (P.map (BSE.decode BSE.latin1 . BSB16.encode) >-> P.print)
+  (mPeerHandshake, leftovers) <-
+    liftIO . P.runStateT decodeHandshakeMessage $
+      P.fromSocket socket bufferSize
+        >-> P.tee
+          ( P.mapM_ $ \bs ->
+              let bs' = BSE.decode BSE.latin1 (BSB16.encode bs)
+              in  fmtLn $ "received data: " +| bs' |+ ""
+          )
 
   liftIO $ putStrLn "handshake completed"
 
   -- Lift the 'Either' value into a 'MonadError AppError'.
-  liftEither ((socket,) <$> mResult)
+  peerHandshake <- liftEither mPeerHandshake
+
+  mMetadataId <-
+    if peerHandshake.hasExtensionSupport
+      then Just <$> doExtensionHandshake socket leftovers
+      else pure Nothing
+
+  pure (socket, (peerHandshake, mMetadataId))
   where
     sendHandshakeMessage :: Socket -> IO ()
     sendHandshakeMessage socket = do
@@ -164,14 +174,18 @@ doHandshake infoHash (PeerAddress {host, port}) = do
       where
         transformError (P.DecodingError _ msg) = DecodingError (T.pack msg)
 
+-- | Does an extension handshake and returns the ID used by the peer for the
+-- metadata extension.
 doExtensionHandshake
   :: (MonadIO m, MonadError AppError m)
   => Socket
+  -> P.Producer BS.ByteString IO ()
   -> m Word8
-doExtensionHandshake socket = do
+doExtensionHandshake socket leftovers = do
+  liftIO $ putStrLn "-> doExtensionHandshake"
   let extensions = Map.fromList [("ut_metadata", 16)]
-  liftIO $ send socket Handshake {extensions}
-  extensionHandshakeResp <- recvExtensionHandshake socket
+  liftIO $ send socket Extensions.Handshake {extensions}
+  extensionHandshakeResp <- recvExtensionHandshake socket leftovers
   pure . fromMaybe 0 $
     Map.lookup "ut_metadata" extensionHandshakeResp.extensions
 
@@ -181,26 +195,32 @@ recvExtensionHandshake
   :: forall m
    . (MonadIO m, MonadError AppError m)
   => Socket
-  -> m Handshake
-recvExtensionHandshake socket = do
-  mResult <- liftIO . P.evalStateT decodeExtensionHandshakeMessage $
-    P.fromSocket socket bufferSize
+  -> P.Producer BS.ByteString IO ()
+  -> m Extensions.Handshake
+recvExtensionHandshake socket leftovers = do
+  mResult <-
+    liftIO . P.evalStateT decodeExtensionHandshakeMessage $ do
+      leftovers
+      P.fromSocket socket bufferSize
   case mResult of
     Left (P.DecodingError _ msg) -> throwError $ DecodingError (T.pack msg)
     Right extensionHandshake -> do
       pure extensionHandshake
-  where
-    decodeExtensionHandshakeMessage
-      :: P.Parser BS.ByteString IO (Either P.DecodingError Handshake)
-    decodeExtensionHandshakeMessage = P.decode
+
+decodeExtensionHandshakeMessage
+  :: P.Parser BS.ByteString IO (Either P.DecodingError Extensions.Handshake)
+decodeExtensionHandshakeMessage = P.decode
 
 sendMetadataRequest :: forall m. MonadIO m => Socket -> Word8 -> m ()
 sendMetadataRequest socket extensionMsgId = do
   liftIO $ send socket Metadata.Request {extensionMsgId, pieceIndex = 0}
 
 sendInterested :: forall m. MonadIO m => Socket -> m ()
-sendInterested socket = do
-  liftIO $ send socket Interested
+sendInterested socket = liftIO $ send socket Interested
+
+recvUnchoke :: forall m. MonadIO m => Socket -> m ()
+recvUnchoke socket = do
+  liftIO $ putStrLn "-> recvUnchoke"
   void $ P.execStateT decodeUnchoke $ P.fromSocket socket bufferSize
   liftIO . putStrLn $ "decoded unchoke on socket: " <> show socket
   where
@@ -226,9 +246,14 @@ downloadPiece socket torrentInfo pieceIndex =
 
     putStrLn "requested blocks"
 
-    subPieces <- P.evalStateT decodeSubPieces $ do
-      -- leftovers
-      P.fromSocket socket bufferSize
+    subPieces <-
+      P.evalStateT decodeSubPieces $
+        P.fromSocket socket bufferSize
+          >-> P.tee
+            ( P.mapM_ $ \bs ->
+                let bs' = BSE.decode BSE.latin1 (BSB16.encode bs)
+                in  fmtLn $ "received data: " +| bs' |+ ""
+            )
 
     -- subPieces <- P.evalStateT decodeSubPiece $ do
     --   P.fromSocket socket bufferSize
@@ -242,9 +267,9 @@ downloadPiece socket torrentInfo pieceIndex =
     --     fmtLn $ "  begin: " +| hexF sp.begin |+ ""
     --   Left e -> putStrLn $ "decoding error: " <> show e
 
-    -- if (null subPieces)
-    --   then putStrLn "NO SUBPIECES RECEIVED"
-    --   else putStrLn $ "SUBPIECES COUNT: " <> show (length subPieces)
+    if (null subPieces)
+      then putStrLn "NO SUBPIECES RECEIVED"
+      else putStrLn $ "SUBPIECES COUNT: " <> show (length subPieces)
 
     forM_ subPieces $ \sp -> do
       fmtLn "sub piece received: "
@@ -253,10 +278,9 @@ downloadPiece socket torrentInfo pieceIndex =
       fmtLn $ "  index: " +| hexF sp.index |+ ""
       fmtLn $ "  begin: " +| hexF sp.begin |+ ""
 
+    -- pure $ foldMap' block []
     pure $ foldMap' block subPieces
   where
-    -- pure $ foldMap' block []
-
     blockLength = 16384
 
     pieceLen = getPieceLength torrentInfo pieceIndex

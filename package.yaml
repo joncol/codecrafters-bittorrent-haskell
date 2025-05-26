@@ -66,6 +66,7 @@ library:
     - bytestring-encoding
     - containers
     - cryptohash-sha1
+    - extra
     - formatting
     - http-client
     - http-types

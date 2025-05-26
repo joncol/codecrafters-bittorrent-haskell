@@ -4,6 +4,7 @@ module App
 
 import Control.Monad (forM, when)
 import Control.Monad.Except (throwError)
+import Control.Monad.Extra (whenJust)
 import Control.Monad.Reader
 import Data.Aeson qualified as Aeson
 import Data.Attoparsec.ByteString (parseOnly)
@@ -49,7 +50,7 @@ runCommand (PeersCommand filename) = do
     >>= \peers -> liftIO . fmtLn $ unlinesF (map show peers)
 runCommand (HandshakeCommand filename peerAddress) = do
   torrentInfo <- getTorrentInfo filename
-  (_, handshakeResp) <- doHandshake torrentInfo.infoHash peerAddress
+  (_, (handshakeResp, _)) <- doHandshake torrentInfo.infoHash peerAddress
   liftIO . fmtLn $
     "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
 runCommand (DownloadPieceCommand outputFilename torrentFilename pieceIndex) = do
@@ -66,7 +67,7 @@ runCommand (DownloadCommand outputFilename torrentFilename) = do
   myPeerId <- asks myPeerId
   peers <- getPeers myPeerId torrentInfo
   sockets <- forM peers $ \peer -> do
-    (socket, handshakeResp) <- doHandshake torrentInfo.infoHash peer
+    (socket, _) <- doHandshake torrentInfo.infoHash peer
     sendInterested socket
     pure socket
   download sockets outputFilename torrentInfo
@@ -80,24 +81,24 @@ runCommand (MagnetHandshakeCommand magnetLinkStr) = do
   case parseOnly parseMagnetLink $ BSE.encode BSE.latin1 magnetLinkStr of
     Right magnetLink -> do
       peerAddress <- getPeerAddress $ magnetLinkToTorrentInfo magnetLink
-      (socket, handshakeResp) <- doHandshake magnetLink.infoHash peerAddress
+      (_, (handshakeResp, mMetadataId)) <-
+        doHandshake magnetLink.infoHash peerAddress
 
       liftIO
         . fmtLn
         $ "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
 
-      when handshakeResp.hasExtensionSupport $ do
-        metadataId <- doExtensionHandshake socket
+      whenJust mMetadataId $ \metadataId ->
         liftIO . fmtLn $ "Peer Metadata Extension ID: " +| metadataId |+ ""
     Left err -> error $ "parser error: " <> err
 runCommand (MagnetInfoCommand magnetLinkStr) = do
   case parseOnly parseMagnetLink $ BSE.encode BSE.latin1 magnetLinkStr of
     Right magnetLink -> do
       peerAddress <- getPeerAddress $ magnetLinkToTorrentInfo magnetLink
-      (socket, handshakeResp) <- doHandshake magnetLink.infoHash peerAddress
+      (socket, (handshakeResp, mMetadataId)) <-
+        doHandshake magnetLink.infoHash peerAddress
       liftIO $ print handshakeResp
-      when handshakeResp.hasExtensionSupport $ do
-        metadataId <- doExtensionHandshake socket
+      whenJust mMetadataId $ \metadataId -> do
         sendMetadataRequest socket metadataId
         liftIO $ do
           data' :: Metadata.Data <- recv socket
@@ -113,10 +114,9 @@ runCommand
       Right magnetLink -> do
         let torrentInfo = magnetLinkToTorrentInfo magnetLink
         peerAddress <- getPeerAddress torrentInfo
-        (socket, handshakeResp) <-
+        (socket, (_, mMetadataId)) <-
           doHandshake magnetLink.infoHash peerAddress
-        when handshakeResp.hasExtensionSupport $ do
-          metadataId <- doExtensionHandshake socket
+        whenJust mMetadataId $ \metadataId -> do
           sendMetadataRequest socket metadataId
           data' :: Metadata.Data <- liftIO $ recv socket
           let torrentInfo' =
@@ -141,13 +141,12 @@ runCommand (MagnetDownloadCommand outputFilename magnetLinkStr) = do
       -- First do base handshake with the first peer.
       let torrentInfo = magnetLinkToTorrentInfo magnetLink
       peerAddress <- getPeerAddress torrentInfo
-      (socket, handshakeResp) <-
+      (socket, (_, mMetadataId)) <-
         doHandshake magnetLink.infoHash peerAddress
 
       -- When the peer has extension support, we do an extension handshake with
       -- it, to be able to get a hold of the needed torrent metadata.
-      when handshakeResp.hasExtensionSupport $ do
-        metadataId <- doExtensionHandshake socket
+      whenJust mMetadataId $ \metadataId -> do
         sendMetadataRequest socket metadataId
         data' :: Metadata.Data <- liftIO $ recv socket
         let torrentInfo' =
