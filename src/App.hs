@@ -59,6 +59,7 @@ runCommand (DownloadPieceCommand outputFilename torrentFilename pieceIndex) = do
   pieceData <- do
     (socket, _) <- doHandshake torrentInfo.infoHash peerAddress
     sendInterested socket
+    recvUnchoke socket
     downloadPiece socket torrentInfo pieceIndex
   liftIO . withFile outputFilename WriteMode $
     \hOut -> BS.hPut hOut pieceData
@@ -69,6 +70,7 @@ runCommand (DownloadCommand outputFilename torrentFilename) = do
   sockets <- forM peers $ \peer -> do
     (socket, _) <- doHandshake torrentInfo.infoHash peer
     sendInterested socket
+    recvUnchoke socket
     pure socket
   download sockets outputFilename torrentInfo
 runCommand (MagnetParseCommand magnetLinkStr) = do
@@ -105,17 +107,17 @@ runCommand (MagnetInfoCommand magnetLinkStr) = do
           Metadata.printData magnetLink data'
     Left err -> error $ "parser error: " <> err
 runCommand
-  ( MagnetDownloadPieceCommand
-      outputFilename
-      magnetLinkStr
-      pieceIndex
-    ) = do
+  (MagnetDownloadPieceCommand outputFilename magnetLinkStr pieceIndex) = do
     case parseOnly parseMagnetLink $ BSE.encode BSE.latin1 magnetLinkStr of
       Right magnetLink -> do
+        -- First do base handshake with the first peer.
         let torrentInfo = magnetLinkToTorrentInfo magnetLink
         peerAddress <- getPeerAddress torrentInfo
         (socket, (_, mMetadataId)) <-
           doHandshake magnetLink.infoHash peerAddress
+
+        -- When the peer has extension support, we do an extension handshake
+        -- with it, to be able to get a hold of the needed torrent metadata.
         whenJust mMetadataId $ \metadataId -> do
           sendMetadataRequest socket metadataId
           data' :: Metadata.Data <- liftIO $ recv socket
@@ -130,7 +132,10 @@ runCommand
                             lookupJustBString "pieces" keyVals
                     in  torrentInfo {fileLength, pieceLength, pieceHashes}
                   _ -> error "invalid metadata"
+
           sendInterested socket
+          recvUnchoke socket
+
           pieceData <- downloadPiece socket torrentInfo' pieceIndex
           liftIO . withFile outputFilename WriteMode $
             \hOut -> BS.hPut hOut pieceData
@@ -160,14 +165,13 @@ runCommand (MagnetDownloadCommand outputFilename magnetLinkStr) = do
                           lookupJustBString "pieces" keyVals
                   in  torrentInfo {fileLength, pieceLength, pieceHashes}
                 _ -> error "invalid metadata"
-        liftIO $ do
-          putStrLn $ "closing socket: " <> show socket
-          close socket
+        liftIO $ close socket
         myPeerId <- asks myPeerId
         peers <- getPeers myPeerId torrentInfo'
         sockets <- forM peers $ \peer -> do
           (socket', _) <- doHandshake torrentInfo'.infoHash peer
           sendInterested socket'
+          recvUnchoke socket'
           pure socket'
         download sockets outputFilename torrentInfo'
     Left err -> error $ "parser error: " <> err

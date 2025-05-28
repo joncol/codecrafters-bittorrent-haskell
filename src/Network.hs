@@ -12,14 +12,12 @@ module Network
   ) where
 
 import Control.Concurrent.Async
-import Control.Monad (forM, forM_, void)
+import Control.Monad (forM_)
 import Control.Monad.Except
 import Control.Monad.IO.Class
 import Data.Binary qualified as Bin
 import Data.ByteString qualified as BS
-import Data.ByteString.Base16 qualified as BSB16
 import Data.ByteString.Char8 qualified as BS8
-import Data.ByteString.Encoding qualified as BSE
 import Data.ByteString.Lazy qualified as BSL
 import Data.Foldable (foldMap')
 import Data.Function (on)
@@ -29,7 +27,6 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Word (Word8)
-import Fmt
 import Lens.Family.State.Strict (zoom)
 import Net.IPv4 qualified as IPv4
 import Network.HTTP.Client (Request (..))
@@ -39,11 +36,9 @@ import Network.HTTP.Types.URI (renderSimpleQuery)
 import Network.Simple.TCP (Socket)
 import Network.Simple.TCP qualified as NS
 import Network.Socket.ByteString qualified as N
-import Pipes ((>->))
 import Pipes.Binary qualified as P
 import Pipes.Network.TCP qualified as P
 import Pipes.Parse qualified as P
-import Pipes.Prelude qualified as P
 import System.IO
 import Text.URI
 
@@ -129,19 +124,19 @@ doHandshake
   -> PeerAddress
   -> AppM AppEnv m (Socket, (PeerHandshake, Maybe Word8))
 doHandshake infoHash (PeerAddress {host, port}) = do
-  liftIO . putStrLn $ "-> doHandshake, " <> IPv4.encodeString host <> ":" <> show port
+  -- liftIO . putStrLn $ "-> doHandshake, " <> IPv4.encodeString host <> ":" <> show port
   (socket, _) <- NS.connectSock (IPv4.encodeString host) (show port)
   liftIO $ sendHandshakeMessage socket
   (mPeerHandshake, leftovers) <-
     liftIO . P.runStateT decodeHandshakeMessage $
       P.fromSocket socket bufferSize
-        >-> P.tee
-          ( P.mapM_ $ \bs ->
-              let bs' = BSE.decode BSE.latin1 (BSB16.encode bs)
-              in  fmtLn $ "received data: " +| bs' |+ ""
-          )
+        -- >-> P.tee
+        --   ( P.mapM_ $ \bs ->
+        --       let t = BSE.decode BSE.latin1 (BSB16.encode bs)
+        --       in  fmtLn $ "received data: " +| t |+ ""
+        --   )
 
-  liftIO $ putStrLn "handshake completed"
+  -- liftIO $ putStrLn "handshake completed"
 
   -- Lift the 'Either' value into a 'MonadError AppError'.
   peerHandshake <- liftEither mPeerHandshake
@@ -182,7 +177,7 @@ doExtensionHandshake
   -> P.Producer BS.ByteString IO ()
   -> m Word8
 doExtensionHandshake socket leftovers = do
-  liftIO $ putStrLn "-> doExtensionHandshake"
+  -- liftIO $ putStrLn "-> doExtensionHandshake"
   let extensions = Map.fromList [("ut_metadata", 16)]
   liftIO $ send socket Extensions.Handshake {extensions}
   extensionHandshakeResp <- recvExtensionHandshake socket leftovers
@@ -218,11 +213,22 @@ sendMetadataRequest socket extensionMsgId = do
 sendInterested :: forall m. MonadIO m => Socket -> m ()
 sendInterested socket = liftIO $ send socket Interested
 
-recvUnchoke :: forall m. MonadIO m => Socket -> m ()
+recvUnchoke
+  :: forall m
+   . MonadIO m
+  => Socket
+  -> m ()
 recvUnchoke socket = do
-  liftIO $ putStrLn "-> recvUnchoke"
-  void $ P.execStateT decodeUnchoke $ P.fromSocket socket bufferSize
-  liftIO . putStrLn $ "decoded unchoke on socket: " <> show socket
+  -- liftIO $ putStrLn "-> recvUnchoke"
+  _unchoke <- P.evalStateT decodeUnchoke $ do
+    P.fromSocket socket bufferSize
+      -- >-> P.tee
+      --   ( P.mapM_ $ \bs ->
+      --       let t = BSE.decode BSE.latin1 (BSB16.encode bs)
+      --       in  liftIO . fmtLn $ "received data: " +| t |+ ""
+      --   )
+  -- liftIO . putStrLn $ "decoded unchoke " <> show unchoke <> " on socket: " <> show socket
+  pure ()
   where
     decodeUnchoke :: P.Parser BS.ByteString m (Either P.DecodingError Unchoke)
     decodeUnchoke = P.decode
@@ -239,46 +245,55 @@ downloadPiece
   -> m BS.ByteString
 downloadPiece socket torrentInfo pieceIndex =
   liftIO $ do
-    putStrLn $ "-> downloadPiece, socket: " <> show socket
-    putStrLn $ "  pieceIndex: " <> show pieceIndex
+    -- putStrLn $ "-> downloadPiece, socket: " <> show socket
+    -- putStrLn $ "  pieceIndex: " <> show pieceIndex
 
     requestBlocks
 
-    putStrLn "requested blocks"
+    -- putStrLn "requested blocks"
 
     subPieces <-
-      P.evalStateT decodeSubPieces $
+      P.evalStateT decodeSubPieces $ do
         P.fromSocket socket bufferSize
-          >-> P.tee
-            ( P.mapM_ $ \bs ->
-                let bs' = BSE.decode BSE.latin1 (BSB16.encode bs)
-                in  fmtLn $ "received data: " +| bs' |+ ""
-            )
+          -- >-> P.tee
+          --   ( P.mapM_ $ \bs ->
+          --       let t = BSE.decode BSE.latin1 (BSB16.encode bs)
+          --       in  fmtLn $ "received data: " +| t |+ ""
+          --   )
 
-    -- subPieces <- P.evalStateT decodeSubPiece $ do
+    -- >-> P.tee
+    --   ( P.mapM_ $ \bs ->
+    --       let t = BSE.decode BSE.latin1 (BSB16.encode bs)
+    --       in  fmtLn $ "received data: " +| t |+ ""
+    --   )
+
+    -- subPiece <- P.evalStateT decodeSubPiece $ do
     --   P.fromSocket socket bufferSize
+    --     >-> P.tee
+    --       ( P.mapM_ $ \bs ->
+    --           let t = BSE.decode BSE.latin1 (BSB16.encode bs)
+    --           in  fmtLn $ "received data: " +| t |+ ""
+    --       )
 
-    -- case subPieces of
+    -- case subPiece of
     --   Right sp -> do
     --     fmtLn $ "sub piece received: "
     --     fmtLn $ "  msgLen: " +| hexF sp.msgLen |+ ""
     --     fmtLn $ "  msgId: " +| hexF sp.mid |+ ""
     --     fmtLn $ "  index: " +| hexF sp.index |+ ""
     --     fmtLn $ "  begin: " +| hexF sp.begin |+ ""
-    --   Left e -> putStrLn $ "decoding error: " <> show e
-
-    if (null subPieces)
-      then putStrLn "NO SUBPIECES RECEIVED"
-      else putStrLn $ "SUBPIECES COUNT: " <> show (length subPieces)
-
-    forM_ subPieces $ \sp -> do
-      fmtLn "sub piece received: "
-      fmtLn $ "  msgLen: " +| hexF sp.msgLen |+ ""
-      fmtLn $ "  msgId: " +| hexF sp.mid |+ ""
-      fmtLn $ "  index: " +| hexF sp.index |+ ""
-      fmtLn $ "  begin: " +| hexF sp.begin |+ ""
-
+    --   Left e -> do
+    --     putStrLn $ "decoding error: " <> show e
+    --     error "BREAK NOW"
     -- pure $ foldMap' block []
+
+    -- forM_ subPieces $ \sp -> do
+    --   fmtLn "sub piece received: "
+    --   fmtLn $ "  msgLen: " +| hexF sp.msgLen |+ ""
+    --   fmtLn $ "  msgId: " +| hexF sp.mid |+ ""
+    --   fmtLn $ "  index: " +| hexF sp.index |+ ""
+    --   fmtLn $ "  begin: " +| hexF sp.begin |+ ""
+
     pure $ foldMap' block subPieces
   where
     blockLength = 16384
@@ -307,9 +322,6 @@ downloadPiece socket torrentInfo pieceIndex =
             , len = fromIntegral len
             }
 
-    decodeSubPiece :: P.Parser BS.ByteString IO (Either P.DecodingError Piece)
-    decodeSubPiece = P.decode
-
     decodeSubPieces :: P.Parser BS.ByteString IO [Piece]
     decodeSubPieces = zoom (P.decoded . P.splitAt blockCount) P.drawAll
       where
@@ -328,9 +340,6 @@ download
   -> TorrentInfo
   -> AppM AppEnv m ()
 download sockets outputFilename torrentInfo = do
-  liftIO $ do
-    putStrLn "-> download"
-    putStrLn $ "torrentInfo: " <> show torrentInfo
   let pieceCount = length torrentInfo.pieceHashes
   pieces <- go [0 .. pieceCount - 1] []
   liftIO $ do
@@ -344,16 +353,11 @@ download sockets outputFilename torrentInfo = do
       -> AppM AppEnv m [(Int, BS.ByteString)]
     go [] acc = pure acc
     go unfinishedPieces acc = do
-      liftIO $ do
-        putStrLn "-> go"
-        putStrLn $ "  unfinishedPieces: " <> show unfinishedPieces
-      results <- liftIO . forM (unfinishedPieces `zip` sockets) $
-        \(pieceIndex, socket) ->
-          (pieceIndex,) <$> downloadPiece socket torrentInfo pieceIndex
-      -- results <- liftIO . forConcurrently (unfinishedPieces `zip` sockets) $
+      -- results <- liftIO . forM (unfinishedPieces `zip` sockets) $
       --   \(pieceIndex, socket) ->
       --     (pieceIndex,) <$> downloadPiece socket torrentInfo pieceIndex
-      forM_ results $ \(i, bs) -> do
-        liftIO $ print (i, BS.length bs)
+      results <- liftIO . forConcurrently (unfinishedPieces `zip` sockets) $
+        \(pieceIndex, socket) ->
+          (pieceIndex,) <$> downloadPiece socket torrentInfo pieceIndex
       let rest = drop (length sockets) unfinishedPieces
       go rest $ acc <> results

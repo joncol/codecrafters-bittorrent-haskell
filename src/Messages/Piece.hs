@@ -7,15 +7,12 @@ import Data.Binary (Binary)
 import Data.Binary qualified as Bin
 import Data.Binary.Get qualified as Bin
 import Data.ByteString qualified as BS
-import Data.Word (Word8)
 import GHC.Generics (Generic)
 
 data Piece = Piece
   { index :: Bin.Word32
   , begin :: Bin.Word32
   , block :: BS.ByteString
-  , mid :: Word8
-  , msgLen :: Int
   }
   deriving (Generic, Show)
 
@@ -32,4 +29,4 @@ instance Binary Piece where
       begin <- Bin.getWord32be
       let blockLen = msgLen - 9
       block <- Bin.getByteString blockLen
-      pure Piece {mid = msgId', ..}
+      pure Piece {..}
