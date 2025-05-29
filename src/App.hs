@@ -50,14 +50,14 @@ runCommand (PeersCommand filename) = do
     >>= \peers -> liftIO . fmtLn $ unlinesF (map show peers)
 runCommand (HandshakeCommand filename peerAddress) = do
   torrentInfo <- getTorrentInfo filename
-  (_, (handshakeResp, _)) <- doHandshake torrentInfo.infoHash peerAddress
+  (_, (handshakeResp, _)) <- doHandshake torrentInfo.infoHash peerAddress False
   liftIO . fmtLn $
     "Peer ID: " +| foldMap byteF (BS.unpack handshakeResp.peerId) |+ ""
 runCommand (DownloadPieceCommand outputFilename torrentFilename pieceIndex) = do
   torrentInfo <- getTorrentInfo torrentFilename
   peerAddress <- getPeerAddress torrentInfo
   pieceData <- do
-    (socket, _) <- doHandshake torrentInfo.infoHash peerAddress
+    (socket, _) <- doHandshake torrentInfo.infoHash peerAddress True
     sendInterested socket
     recvUnchoke socket
     downloadPiece socket torrentInfo pieceIndex
@@ -68,7 +68,7 @@ runCommand (DownloadCommand outputFilename torrentFilename) = do
   myPeerId <- asks myPeerId
   peers <- getPeers myPeerId torrentInfo
   sockets <- forM peers $ \peer -> do
-    (socket, _) <- doHandshake torrentInfo.infoHash peer
+    (socket, _) <- doHandshake torrentInfo.infoHash peer True
     sendInterested socket
     recvUnchoke socket
     pure socket
@@ -84,7 +84,7 @@ runCommand (MagnetHandshakeCommand magnetLinkStr) = do
     Right magnetLink -> do
       peerAddress <- getPeerAddress $ magnetLinkToTorrentInfo magnetLink
       (_, (handshakeResp, mMetadataId)) <-
-        doHandshake magnetLink.infoHash peerAddress
+        doHandshake magnetLink.infoHash peerAddress True
 
       liftIO
         . fmtLn
@@ -97,9 +97,8 @@ runCommand (MagnetInfoCommand magnetLinkStr) = do
   case parseOnly parseMagnetLink $ BSE.encode BSE.latin1 magnetLinkStr of
     Right magnetLink -> do
       peerAddress <- getPeerAddress $ magnetLinkToTorrentInfo magnetLink
-      (socket, (handshakeResp, mMetadataId)) <-
-        doHandshake magnetLink.infoHash peerAddress
-      liftIO $ print handshakeResp
+      (socket, (_, mMetadataId)) <-
+        doHandshake magnetLink.infoHash peerAddress True
       whenJust mMetadataId $ \metadataId -> do
         sendMetadataRequest socket metadataId
         liftIO $ do
@@ -114,7 +113,7 @@ runCommand
         let torrentInfo = magnetLinkToTorrentInfo magnetLink
         peerAddress <- getPeerAddress torrentInfo
         (socket, (_, mMetadataId)) <-
-          doHandshake magnetLink.infoHash peerAddress
+          doHandshake magnetLink.infoHash peerAddress True
 
         -- When the peer has extension support, we do an extension handshake
         -- with it, to be able to get a hold of the needed torrent metadata.
@@ -147,7 +146,7 @@ runCommand (MagnetDownloadCommand outputFilename magnetLinkStr) = do
       let torrentInfo = magnetLinkToTorrentInfo magnetLink
       peerAddress <- getPeerAddress torrentInfo
       (socket, (_, mMetadataId)) <-
-        doHandshake magnetLink.infoHash peerAddress
+        doHandshake magnetLink.infoHash peerAddress True
 
       -- When the peer has extension support, we do an extension handshake with
       -- it, to be able to get a hold of the needed torrent metadata.
@@ -169,7 +168,7 @@ runCommand (MagnetDownloadCommand outputFilename magnetLinkStr) = do
         myPeerId <- asks myPeerId
         peers <- getPeers myPeerId torrentInfo'
         sockets <- forM peers $ \peer -> do
-          (socket', _) <- doHandshake torrentInfo'.infoHash peer
+          (socket', _) <- doHandshake torrentInfo'.infoHash peer True
           sendInterested socket'
           recvUnchoke socket'
           pure socket'

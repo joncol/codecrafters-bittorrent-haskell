@@ -17,7 +17,9 @@ import Control.Monad.Except
 import Control.Monad.IO.Class
 import Data.Binary qualified as Bin
 import Data.ByteString qualified as BS
+import Data.ByteString.Base16 qualified as BSB16
 import Data.ByteString.Char8 qualified as BS8
+import Data.ByteString.Encoding qualified as BSE
 import Data.ByteString.Lazy qualified as BSL
 import Data.Foldable (foldMap')
 import Data.Function (on)
@@ -27,6 +29,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Word (Word8)
+import Fmt
 import Lens.Family.State.Strict (zoom)
 import Net.IPv4 qualified as IPv4
 import Network.HTTP.Client (Request (..))
@@ -36,9 +39,11 @@ import Network.HTTP.Types.URI (renderSimpleQuery)
 import Network.Simple.TCP (Socket)
 import Network.Simple.TCP qualified as NS
 import Network.Socket.ByteString qualified as N
+import Pipes ((>->))
 import Pipes.Binary qualified as P
 import Pipes.Network.TCP qualified as P
 import Pipes.Parse qualified as P
+import Pipes.Prelude qualified as P
 import System.IO
 import Text.URI
 
@@ -117,13 +122,14 @@ getPeers myPeerId torrentInfo = runReq defaultHttpConfig $ do
               ]
       in  pure request {queryString}
 
--- | Does a peer handshake and waits for a "bitfield" message.
+-- | Does a peer handshake and optionally waits for a "bitfield" message.
 doHandshake
   :: MonadIO m
   => Hash
   -> PeerAddress
+  -> Bool
   -> AppM AppEnv m (Socket, (PeerHandshake, Maybe Word8))
-doHandshake infoHash (PeerAddress {host, port}) = do
+doHandshake infoHash (PeerAddress {host, port}) waitForBitField = do
   -- liftIO . putStrLn $ "-> doHandshake, " <> IPv4.encodeString host <> ":" <> show port
   (socket, _) <- NS.connectSock (IPv4.encodeString host) (show port)
   liftIO $ sendHandshakeMessage socket
@@ -164,7 +170,10 @@ doHandshake infoHash (PeerAddress {host, port}) = do
     decodeHandshakeMessage = do
       runExceptT . withExceptT transformError $ do
         peerHandshake <- ExceptT P.decode
-        _bitField :: BitField <- ExceptT P.decode -- TODO: Can we use 'void' instead?
+        _bitField :: Maybe BitField <-
+          if waitForBitField
+            then Just <$> ExceptT P.decode
+            else pure Nothing
         pure peerHandshake
       where
         transformError (P.DecodingError _ msg) = DecodingError (T.pack msg)
@@ -222,11 +231,11 @@ recvUnchoke socket = do
   -- liftIO $ putStrLn "-> recvUnchoke"
   _unchoke <- P.evalStateT decodeUnchoke $ do
     P.fromSocket socket bufferSize
-      -- >-> P.tee
-      --   ( P.mapM_ $ \bs ->
-      --       let t = BSE.decode BSE.latin1 (BSB16.encode bs)
-      --       in  liftIO . fmtLn $ "received data: " +| t |+ ""
-      --   )
+  -- >-> P.tee
+  --   ( P.mapM_ $ \bs ->
+  --       let t = BSE.decode BSE.latin1 (BSB16.encode bs)
+  --       in  liftIO . fmtLn $ "received data: " +| t |+ ""
+  --   )
   -- liftIO . putStrLn $ "decoded unchoke " <> show unchoke <> " on socket: " <> show socket
   pure ()
   where
@@ -255,11 +264,11 @@ downloadPiece socket torrentInfo pieceIndex =
     subPieces <-
       P.evalStateT decodeSubPieces $ do
         P.fromSocket socket bufferSize
-          -- >-> P.tee
-          --   ( P.mapM_ $ \bs ->
-          --       let t = BSE.decode BSE.latin1 (BSB16.encode bs)
-          --       in  fmtLn $ "received data: " +| t |+ ""
-          --   )
+    -- >-> P.tee
+    --   ( P.mapM_ $ \bs ->
+    --       let t = BSE.decode BSE.latin1 (BSB16.encode bs)
+    --       in  fmtLn $ "received data: " +| t |+ ""
+    --   )
 
     -- >-> P.tee
     --   ( P.mapM_ $ \bs ->
